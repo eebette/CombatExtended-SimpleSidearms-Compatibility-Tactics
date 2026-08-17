@@ -1,5 +1,8 @@
 # CombatExtended-SimpleSidearms Compatibility Module - Tactics
 
+[![Combat Extended Compatible](Media/Badge_CE_compatible.png)](https://steamcommunity.com/sharedfiles/filedetails/?id=2890901044)
+![CE + Simple Sidearms Compatibility Suite](Media/Badge_Suite.png)
+
 **Status: placeholder — no code yet.** This README is the complete project brief; an
 agent picking this up cold should be able to work from it plus the sibling repos.
 
