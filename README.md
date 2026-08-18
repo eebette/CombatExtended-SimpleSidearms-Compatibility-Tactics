@@ -55,10 +55,16 @@ module, and why **every feature ships opt-in, default OFF**.
 4. **Ammo-depth tiebreak.** Core axis 3 made selection binary (has ammo / hasn't); a
    gun with 5 loose rounds ranks equal to one with 200 spare. Extend the scoring with
    carried-round depth as a tiebreak. New scoring policy — hence here, not the core.
-5. **Gun+ammo pair selection per target.** CE picks ammo variants (AP/FMJ/EMP) per
-   gun (`CompAmmoUser.SelectedAmmo`); SS picks guns. Nobody picks the *pair* against
-   the target (mech approaching → swap to the gun AND load EMP/AP). Joint selection
-   over (carried weapon × carried ammo variant).
+5. **Ammo-aware joint weapon ranking (DESCOPED 2026-08-18 to the seam sliver).**
+   When ranking carried weapons vs a target (the same pathways as features 1/2/4),
+   score each candidate by its BEST CARRIED ammo variant for that target instead of
+   its currently-loaded one, and guarded-set `SelectedAmmo` on the winner before the
+   swap. ~80–120 lines riding the existing selection path.
+   OUT OF SCOPE (owner's seam test): situational ammo selection for the equipped
+   gun alone ("mech approaching → load EMP") — that is pure CE domain, zero SS
+   involvement; parked as a standalone CE enhancement / CE upstream candidate
+   (JobGiver_CheckReload already owns change-SelectedAmmo-then-reload machinery,
+   optimized for availability; a target-aware version is the natural extension).
    **Verified 2026-08-18 — CE ships NO situational ammo AI**, so this is purely
    additive. Complete list of `SelectedAmmo` writers in CE: the player's
    "Reload with..." UI (`Command_Reload.SetAmmoType`, the only intent-bearing one);
