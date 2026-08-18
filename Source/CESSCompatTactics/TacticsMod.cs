@@ -6,24 +6,26 @@ namespace CESSCompatTactics
 {
     public class TacticsSettings : ModSettings
     {
-        // Everything OFF by default: this module is pure enhancement — new triggers
-        // neither upstream mod ever had (module charter).
-        public bool reloadAbort = false;
+        // Installing THIS mod is the opt-in (owner's call 2026-08-18): the headline
+        // behaviors ship ON. The one exception is forced-dry fall-through — it
+        // overrides explicit player intent (a forced weapon), a different consent
+        // category, so it alone stays OFF by default.
+        public bool reloadAbort = true;
         public bool forcedDryFallthrough = false;
-        public bool ammoDepthTiebreak = false;
+        public bool ammoDepthTiebreak = true;
         public int tiebreakEpsilonPct = 10;
-        public bool targetAwareAmmoScoring = false;
-        public bool armorAwareMelee = false;
+        public bool targetAwareAmmoScoring = true;
+        public bool armorAwareMelee = true;
 
         public override void ExposeData()
         {
             base.ExposeData();
-            Scribe_Values.Look(ref reloadAbort, "reloadAbort", false);
+            Scribe_Values.Look(ref reloadAbort, "reloadAbort", true);
             Scribe_Values.Look(ref forcedDryFallthrough, "forcedDryFallthrough", false);
-            Scribe_Values.Look(ref ammoDepthTiebreak, "ammoDepthTiebreak", false);
+            Scribe_Values.Look(ref ammoDepthTiebreak, "ammoDepthTiebreak", true);
             Scribe_Values.Look(ref tiebreakEpsilonPct, "tiebreakEpsilonPct", 10);
-            Scribe_Values.Look(ref targetAwareAmmoScoring, "targetAwareAmmoScoring", false);
-            Scribe_Values.Look(ref armorAwareMelee, "armorAwareMelee", false);
+            Scribe_Values.Look(ref targetAwareAmmoScoring, "targetAwareAmmoScoring", true);
+            Scribe_Values.Look(ref armorAwareMelee, "armorAwareMelee", true);
         }
     }
 

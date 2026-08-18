@@ -6,11 +6,13 @@
     <supportedVersions>
         <li>1.6</li>
     </supportedVersions>
-    <description>Opt-in combat-time weapon-choice enhancements for the Combat Extended + Simple Sidearms combination. Every feature is OFF by default.
+    <description>Combat-time weapon-choice enhancements for the Combat Extended + Simple Sidearms combination. Installing the mod turns them on; every feature has its own settings toggle.
 
 - Reload-abort when threatened: a pawn mid-reload with a hostile in effective range swaps to a loaded carried weapon instead of finishing the reload (player-ordered reloads are never interrupted).
-- Forced-weapon dry fall-through: a pawn forced onto a weapon that is completely out of ammo temporarily uses normal weapon selection; the forced weapon resumes the moment ammo is available again.
+- Target-aware weapon choice: when drawing a gun against a target, the currently-loaded ammo's effectiveness against THAT target counts (penetration vs armor, EMP vs mechs). Never switches or reloads ammo.
+- Armor-aware melee choice: blunt weapons against armor, fast blades against flesh.
 - Ammo-depth tiebreak: when two carried guns rank about equally, prefer the one with deeper ammo reserves.
+- Forced-weapon dry fall-through (OFF by default — it overrides your explicit forced-weapon choice): a pawn forced onto a weapon that is completely out of ammo temporarily uses normal selection; the forced weapon resumes the moment ammo is available.
 
 Requires the CombatExtended-SimpleSidearms Compatibility Patch.</description>
     <modDependencies>

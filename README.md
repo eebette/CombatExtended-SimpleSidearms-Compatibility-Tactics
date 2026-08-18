@@ -23,8 +23,11 @@ Opt-in combat-time AI enhancements for the CombatExtended (CE) + SimpleSidearms 
 combination. Every feature here addresses a game state that only the *combination*
 creates — situations neither upstream designer ever faced ("gaps"), as opposed to one
 mod's behavior broken by the other ("bugs", which the core compat patch repairs).
-Everything in this module is enhancement, not repair. That is why it is a separate
-module, and why **every feature ships opt-in, default OFF**.
+Everything in this module is enhancement, not repair — which is why it is a
+separate module. **Defaults revised 2026-08-18 (owner's call): installing this mod
+IS the opt-in, so the headline behaviors ship ON** — except any feature that
+overrides explicit player intent (currently only forced-dry fall-through), which
+stays OFF by default. Every feature keeps its own toggle.
 
 ## Family
 
@@ -203,8 +206,9 @@ a gap BETWEEN the mods; (2) switch test — if either mod has a control expressi
 intent, extend that control, never a parallel toggle or different default polarity;
 (3) ownership test — stateless derivation over owned state, guarded writes over
 stomps, additive UI over replaced UI, opt-in default-off unless an upstream
-convention licenses the default. For THIS module: everything is by definition new
-policy, so everything is opt-in default-off, full stop.
+convention licenses the default. For THIS module (revised): install-as-consent
+covers the headline behaviors (Loadout Quality / SS-install precedent); features
+that override explicit player intent default off regardless.
 
 ## Sizing (2026-08-18, post-descopes)
 
