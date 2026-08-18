@@ -4,8 +4,18 @@
 ![CE + Simple Sidearms Compatibility Suite](Media/Badge_Suite.png)
 ![CE + Simple Sidearms Tactics Module](Media/Badge_Tactics.png)
 
-**Status: placeholder — no code yet.** This README is the complete project brief; an
-agent picking this up cold should be able to work from it plus the sibling repos.
+**Status: v0.1 scaffolded 2026-08-18 — features 1, 3, 4 implemented and compiling
+(`Source/CESSCompatTactics/Features/`); staging scenarios + assert runner next.
+Features 5 and 6 are spec-complete below, unimplemented.** This README is the
+project brief; an agent picking this up cold should work from it plus the
+sibling repos.
+
+Defaults chosen at scaffold (were open questions): settings = per-feature
+toggles all OFF plus a tiebreak-margin slider (no master switch — three toggles
+don't need one); reload-abort leaves the abandoned reload to CE's natural idle
+reload flow (no resume bookkeeping); feature 1 is a 30-tick GameComponent scan
+over currently-reloading pawns rather than a reload-driver Harmony patch
+(fewer patched members, same behavior).
 
 ## Objective
 

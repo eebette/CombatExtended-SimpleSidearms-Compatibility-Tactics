@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+    <name>CombatExtended-SimpleSidearms Compatibility Module - Tactics</name>
+    <author>eebette</author>
+    <packageId>eebette.CESimpleSidearmsCompat.Tactics</packageId>
+    <supportedVersions>
+        <li>1.6</li>
+    </supportedVersions>
+    <description>Opt-in combat-time weapon-choice enhancements for the Combat Extended + Simple Sidearms combination. Every feature is OFF by default.
+
+- Reload-abort when threatened: a pawn mid-reload with a hostile in effective range swaps to a loaded carried weapon instead of finishing the reload (player-ordered reloads are never interrupted).
+- Forced-weapon dry fall-through: a pawn forced onto a weapon that is completely out of ammo temporarily uses normal weapon selection; the forced weapon resumes the moment ammo is available again.
+- Ammo-depth tiebreak: when two carried guns rank about equally, prefer the one with deeper ammo reserves.
+
+Requires the CombatExtended-SimpleSidearms Compatibility Patch.</description>
+    <modDependencies>
+        <li>
+            <packageId>brrainz.harmony</packageId>
+            <displayName>Harmony</displayName>
+            <steamWorkshopUrl>steam://url/CommunityFilePage/2009463077</steamWorkshopUrl>
+        </li>
+        <li>
+            <packageId>PeteTimesSix.SimpleSidearms</packageId>
+            <displayName>Simple Sidearms</displayName>
+            <steamWorkshopUrl>steam://url/CommunityFilePage/927155256</steamWorkshopUrl>
+        </li>
+        <li>
+            <packageId>CETeam.CombatExtended</packageId>
+            <displayName>Combat Extended</displayName>
+            <steamWorkshopUrl>steam://url/CommunityFilePage/2890901044</steamWorkshopUrl>
+        </li>
+        <li>
+            <packageId>eebette.CESimpleSidearmsCompat</packageId>
+            <displayName>CombatExtended-SimpleSidearms Compatibility Patch</displayName>
+            <downloadUrl>https://github.com/eebette/CombatExtended-SimpleSidearms-Compatibility-Patch</downloadUrl>
+        </li>
+    </modDependencies>
+    <loadAfter>
+        <li>brrainz.harmony</li>
+        <li>PeteTimesSix.SimpleSidearms</li>
+        <li>CETeam.CombatExtended</li>
+        <li>eebette.CESimpleSidearmsCompat</li>
+    </loadAfter>
+</ModMetaData>
