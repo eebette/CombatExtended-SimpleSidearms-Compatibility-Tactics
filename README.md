@@ -59,6 +59,17 @@ module, and why **every feature ships opt-in, default OFF**.
    gun (`CompAmmoUser.SelectedAmmo`); SS picks guns. Nobody picks the *pair* against
    the target (mech approaching → swap to the gun AND load EMP/AP). Joint selection
    over (carried weapon × carried ammo variant).
+   **Verified 2026-08-18 — CE ships NO situational ammo AI**, so this is purely
+   additive. Complete list of `SelectedAmmo` writers in CE: the player's
+   "Reload with..." UI (`Command_Reload.SetAmmoType`, the only intent-bearing one);
+   `JobGiver_CheckReload`'s availability fallback (out of stock → switch to any
+   compatible carried ammo — scarcity, not tactics); mech/turret plumbing
+   (`MechTakeAmmoCE`, autoloaders, `CompAmmosetSwitcher`). Design consequences:
+   (a) CE stores no player-intent flag on SelectedAmmo (spawn default = first ammo
+   type), so use the Loadouts module's guarded-write pattern — track what WE last
+   set per weapon; overwrite only our own writes or factory state; (b) treat
+   JobGiver_CheckReload's scarcity write as not-ours and back off; (c) like CE's
+   fallback, never select a variant the pawn isn't carrying.
 6. **Armor-aware melee choice.** SS's melee scoring averages damage/penetration;
    under CE's armor system the right pick is target-dependent (blunt vs high-pen
    sharp). Per-target melee selection — likely interacts with the core patch's P06
