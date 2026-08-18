@@ -98,6 +98,14 @@ weapon is out of range, no swap. No target anywhere → features don't fire and
 scoring stays in SS's existing target-less mode (`findBestRangedWeapon`'s target
 parameter is already nullable with defined behavior).
 
+**Explicit non-goal — target PRIORITIZATION.** Which enemy to fight first (e.g.
+near pistol raider vs far sniper-range raider) is vanilla AI / player-micro /
+dedicated-AI-mod territory (CAI 5000 et al.), never this module's. We select
+weapons FOR the chosen target; we never choose or re-rank targets. The suite's
+existing protections at each stage: proximity-weighted vanilla finder re-picks as
+threats close; axis-7 warmup swap re-arms for the new target; axis-6 CQC covers
+arrival in melee. The approach-window risk is vanilla combat, unchanged by us.
+
 Resolved elsewhere / rejected (do not re-add): ammo resupply for remembered sidearms
 (became the Loadouts module); SS bulk-based carry sliders (SS-domain settings UI —
 upstream suggestion territory, never our code); grenade automation (SS excludes
