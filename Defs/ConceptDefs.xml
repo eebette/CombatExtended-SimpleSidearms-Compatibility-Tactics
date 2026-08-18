@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Defs>
+    <ConceptDef>
+        <defName>CESSTactics_ForcedDryChoice</defName>
+        <label>Forced weapons and empty guns</label>
+        <priority>60</priority>
+        <needsOpportunity>true</needsOpportunity>
+        <helpText>You forced a pawn to use a specific weapon. Under Combat Extended that weapon can run completely out of ammo — something the forced-weapon order was never designed to anticipate — so the order can mean two things:\n\n- Hold it no matter what, even empty (the current default: your order is followed literally).\n- Prefer it while usable, but fall back to normal weapon selection while it is truly dry, resuming the forced weapon as soon as ammo is available.\n\nPick your reading in Mod Settings -> CE+SS Tactics -> "Forced-weapon dry fall-through".</helpText>
+    </ConceptDef>
+</Defs>

@@ -3,6 +3,7 @@ using CombatExtended;
 using HarmonyLib;
 using PeteTimesSix.SimpleSidearms;
 using PeteTimesSix.SimpleSidearms.Utilities;
+using RimWorld;
 using SimpleSidearms.rimworld;
 using Verse;
 using static PeteTimesSix.SimpleSidearms.Utilities.Enums;
@@ -75,6 +76,7 @@ namespace CESSCompatTactics.Features
         }
 
         /// <summary>Empty magazine AND no compatible ammo anywhere on the pawn.</summary>
+        // (see also ForcedWeaponLesson_Patch below)
         private static bool IsTrulyDry(Pawn pawn, ThingDefStuffDefPair pair)
         {
             ThingWithComps carried = pawn.GetCarriedWeapons(includeEquipped: true, includeTools: true)
@@ -90,6 +92,28 @@ namespace CESSCompatTactics.Features
             }
             bool magEmpty = !user.HasMagazine || user.CurMagCount <= 0;
             return magEmpty && !user.HasAmmo;
+        }
+    }
+
+    /// <summary>
+    /// Learning Helper note at the moment the ambiguity starts existing for the
+    /// player: the first time they FORCE a weapon, the vanilla lesson system
+    /// explains the two readings ("hold no matter what" vs "prefer while usable")
+    /// and where the toggle lives. Vanilla's own teaching surface — no popups.
+    /// </summary>
+    [HarmonyPatch(typeof(CompSidearmMemory), nameof(CompSidearmMemory.SetWeaponAsForced))]
+    public static class ForcedWeaponLesson_Patch
+    {
+        private static ConceptDef concept;
+
+        [HarmonyPostfix]
+        public static void Postfix()
+        {
+            concept = concept ?? DefDatabase<ConceptDef>.GetNamedSilentFail("CESSTactics_ForcedDryChoice");
+            if (concept != null)
+            {
+                LessonAutoActivator.TeachOpportunity(concept, OpportunityType.GoodToKnow);
+            }
         }
     }
 }
