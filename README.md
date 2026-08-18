@@ -55,16 +55,20 @@ module, and why **every feature ships opt-in, default OFF**.
 4. **Ammo-depth tiebreak.** Core axis 3 made selection binary (has ammo / hasn't); a
    gun with 5 loose rounds ranks equal to one with 200 spare. Extend the scoring with
    carried-round depth as a tiebreak. New scoring policy — hence here, not the core.
-5. **Ammo-aware joint weapon ranking (DESCOPED 2026-08-18 to the seam sliver).**
-   When ranking carried weapons vs a target (the same pathways as features 1/2/4),
-   score each candidate by its BEST CARRIED ammo variant for that target instead of
-   its currently-loaded one, and guarded-set `SelectedAmmo` on the winner before the
-   swap. ~80–120 lines riding the existing selection path.
+5. **Target-aware ranking of loaded ammo (settled 2026-08-18 after two descopes).**
+   When ranking carried weapons vs a target (same pathways as features 1/2/4), value
+   each candidate's CURRENTLY-LOADED ammo against the actual target — penetration vs
+   the target's armor, EMP effectiveness vs mechs — instead of the single generic DPS
+   number. The core patch's P02 already scores by the loaded variant's damage, so
+   this is a target-effectiveness term on top of the existing scoring path. NO ammo
+   switching, NO SelectedAmmo writes (owner: scoring best-carried-but-not-loaded
+   ammo is strictly worse — the pawn would switch guns and shoot the worse round).
+   ~50–80 lines.
    OUT OF SCOPE (owner's seam test): situational ammo selection for the equipped
-   gun alone ("mech approaching → load EMP") — that is pure CE domain, zero SS
-   involvement; parked as a standalone CE enhancement / CE upstream candidate
-   (JobGiver_CheckReload already owns change-SelectedAmmo-then-reload machinery,
-   optimized for availability; a target-aware version is the natural extension).
+   gun ("mech approaching → load EMP") — pure CE domain, zero SS involvement; parked
+   as a standalone CE enhancement / CE upstream candidate (JobGiver_CheckReload
+   already owns change-SelectedAmmo-then-reload machinery, optimized for
+   availability; a target-aware version is the natural extension).
    **Verified 2026-08-18 — CE ships NO situational ammo AI**, so this is purely
    additive. Complete list of `SelectedAmmo` writers in CE: the player's
    "Reload with..." UI (`Command_Reload.SetAmmoType`, the only intent-bearing one);
