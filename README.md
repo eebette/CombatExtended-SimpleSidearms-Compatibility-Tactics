@@ -4,9 +4,9 @@
 ![CE + Simple Sidearms Compatibility Suite](Media/Badge_Suite.png)
 ![CE + Simple Sidearms Tactics Module](Media/Badge_Tactics.png)
 
-**Status: v0.1 scaffolded 2026-08-18 — features 1, 3, 4 implemented and compiling
-(`Source/CESSCompatTactics/Features/`); staging scenarios + assert runner next.
-Features 5 and 6 are spec-complete below, unimplemented.** This README is the
+**Status: ALL FIVE features implemented and machine-verified 2026-08-18
+(15/15 automated phases green — see TESTPLAN.md). Remaining: owner feel-testing
++ the suite release train.** This README is the
 project brief; an agent picking this up cold should work from it plus the
 sibling repos.
 

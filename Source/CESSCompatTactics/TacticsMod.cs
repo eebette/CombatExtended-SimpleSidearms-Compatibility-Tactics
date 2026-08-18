@@ -12,6 +12,8 @@ namespace CESSCompatTactics
         public bool forcedDryFallthrough = false;
         public bool ammoDepthTiebreak = false;
         public int tiebreakEpsilonPct = 10;
+        public bool targetAwareAmmoScoring = false;
+        public bool armorAwareMelee = false;
 
         public override void ExposeData()
         {
@@ -20,6 +22,8 @@ namespace CESSCompatTactics
             Scribe_Values.Look(ref forcedDryFallthrough, "forcedDryFallthrough", false);
             Scribe_Values.Look(ref ammoDepthTiebreak, "ammoDepthTiebreak", false);
             Scribe_Values.Look(ref tiebreakEpsilonPct, "tiebreakEpsilonPct", 10);
+            Scribe_Values.Look(ref targetAwareAmmoScoring, "targetAwareAmmoScoring", false);
+            Scribe_Values.Look(ref armorAwareMelee, "armorAwareMelee", false);
         }
     }
 
@@ -49,6 +53,10 @@ namespace CESSCompatTactics
                 "When two carried guns rank within the margin below, prefer the one with deeper ammo reserves (magazine + carried spares).");
             listing.Label($"Tiebreak margin: {Settings.tiebreakEpsilonPct}% of the top score");
             Settings.tiebreakEpsilonPct = Mathf.RoundToInt(listing.Slider(Settings.tiebreakEpsilonPct, 0f, 30f));
+            listing.CheckboxLabeled("Target-aware ammo scoring", ref Settings.targetAwareAmmoScoring,
+                "When choosing which gun to draw against a target, weigh the CURRENTLY-LOADED ammo's effectiveness against that target (penetration vs armor, EMP vs mechs). Never switches or reloads ammo.");
+            listing.CheckboxLabeled("Armor-aware melee choice", ref Settings.armorAwareMelee,
+                "When drawing a melee weapon against a target, pick by CE melee-tool effectiveness against that target's armor (blunt vs armored, fast blades vs flesh).");
             listing.End();
         }
     }

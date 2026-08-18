@@ -112,6 +112,8 @@ namespace CESSTacticsTestStaging
             TacticsMod.Settings.forcedDryFallthrough = false;
             TacticsMod.Settings.ammoDepthTiebreak = false;
             TacticsMod.Settings.tiebreakEpsilonPct = 10;
+            TacticsMod.Settings.targetAwareAmmoScoring = false;
+            TacticsMod.Settings.armorAwareMelee = false;
         }
 
         private static void DisableLoadoutsModule()
@@ -310,8 +312,11 @@ namespace CESSTacticsTestStaging
 
         private static Pawn Raider()
         {
+            // Humans only — the mech scenarios have their own Mech() finder, and the
+            // flesh-target phases must never accidentally grab the centipede.
             return Find.CurrentMap.mapPawns.AllPawnsSpawned
-                .FirstOrDefault(p => p.HostileTo(Faction.OfPlayer) && !p.Dead && !p.Downed);
+                .FirstOrDefault(p => p.HostileTo(Faction.OfPlayer) && !p.Dead && !p.Downed
+                                     && !(p.RaceProps?.IsMechanoid ?? false));
         }
 
         private static void ParkRaiderAt(Pawn colonist, int distance)
@@ -367,8 +372,186 @@ namespace CESSTacticsTestStaging
                 case "tact1": return BuildTact1();
                 case "tact2": return BuildTact2();
                 case "tact3": return BuildTact3();
+                case "tact4": return BuildTact4();
+                case "tact5": return BuildTact5();
                 default: throw new InvalidOperationException("Unknown scenario: " + name);
             }
+        }
+
+        private static Pawn Mech()
+        {
+            return Find.CurrentMap.mapPawns.AllPawnsSpawned
+                .FirstOrDefault(p => (p.RaceProps?.IsMechanoid ?? false) && p.HostileTo(Faction.OfPlayer) && !p.Dead);
+        }
+
+        private static void ParkPawnNear(Pawn anchor, Pawn parked, int distance)
+        {
+            IntVec3 cell = anchor.Position + new IntVec3(distance, 0, 0);
+            cell = cell.ClampInsideMap(anchor.Map);
+            if (!cell.Standable(anchor.Map))
+            {
+                CellFinder.TryFindRandomCellNear(cell, anchor.Map, 8, c => c.Standable(anchor.Map), out cell);
+            }
+            parked.Position = cell;
+            parked.Notify_Teleported();
+        }
+
+        // -- TACT-4: target-aware loaded-ammo scoring -----------------------
+
+        private List<Phase> BuildTact4()
+        {
+            Pawn ammy = Colonist("Ammy");
+            ThingDef rifle = D("Gun_AssaultRifle");
+            ThingDef shotgun = D("Gun_PumpShotgun");
+
+            (ThingWithComps weapon, float dps, float averageSpeed) FindBest(Pawn target) =>
+                GettersFilters.findBestRangedWeapon(ammy, new LocalTargetInfo(target));
+
+            string Detail(Pawn target)
+            {
+                ThingWithComps r = Carried(ammy, rifle);
+                ThingWithComps g = Carried(ammy, shotgun);
+                float mr = CESSCompatTactics.Features.TargetScoring.RangedMultiplier(r, target);
+                float mg = CESSCompatTactics.Features.TargetScoring.RangedMultiplier(g, target);
+                return $"mult rifle={mr:F2} shotgun={mg:F2} armor={target.GetStatValue(StatDefOf.ArmorRating_Sharp):F1}";
+            }
+
+            return new List<Phase>
+            {
+                new Phase
+                {
+                    label = "off-close-range-pick",
+                    deadlineTicks = 3000,
+                    mutate = () =>
+                    {
+                        Pawn mech = Mech() ?? throw new InvalidOperationException("Mech missing");
+                        ParkPawnNear(ammy, mech, 8);
+                    },
+                    checks =
+                    {
+                        C("off-pick-recorded", () =>
+                        {
+                            var (weapon, dps, _) = FindBest(Mech());
+                            return (true, $"OFF pick={weapon?.def?.defName} dps={dps:F2}; {Detail(Mech())}");
+                        }, informational: true),
+                    }
+                },
+                new Phase
+                {
+                    label = "on-armor-flips-to-penetrator",
+                    deadlineTicks = 3000,
+                    mutate = () => { TacticsMod.Settings.targetAwareAmmoScoring = true; },
+                    checks =
+                    {
+                        C("winner-is-rifle-vs-armored-mech", () =>
+                        {
+                            var (weapon, dps, _) = FindBest(Mech());
+                            return (weapon?.def == rifle, $"ON pick={weapon?.def?.defName} adj={dps:F2}; {Detail(Mech())}");
+                        }),
+                    }
+                },
+            };
+        }
+
+        // -- TACT-5: armor-aware melee choice -------------------------------
+
+        private List<Phase> BuildTact5()
+        {
+            Pawn marcy = Colonist("Marcy");
+            ThingDef knife = D("MeleeWeapon_Knife");
+            ThingDef mace = D("MeleeWeapon_Mace");
+            Pawn fleshTarget = null;
+
+            ThingWithComps FindMelee(Pawn target)
+            {
+                GettersFilters.findBestMeleeWeapon(marcy, out ThingWithComps result,
+                    includeEquipped: true, includeRangedWithBash: true, target: target);
+                return result;
+            }
+
+            return new List<Phase>
+            {
+                new Phase
+                {
+                    label = "off-pick-recorded",
+                    deadlineTicks = 3000,
+                    checks =
+                    {
+                        C("off-vs-mech", () =>
+                        {
+                            ThingWithComps w = FindMelee(Mech());
+                            return (true, $"OFF pick vs mech={w?.def?.defName ?? "fists"}");
+                        }, informational: true),
+                    }
+                },
+                new Phase
+                {
+                    label = "on-vs-flesh-picks-blade",
+                    deadlineTicks = 3000,
+                    mutate = () =>
+                    {
+                        TacticsMod.Settings.armorAwareMelee = true;
+                        fleshTarget = Raider();
+                        if (fleshTarget == null)
+                        {
+                            IntVec3 c = marcy.Position;
+                            Faction pirates = Find.FactionManager.FirstFactionOfDef(FactionDefOf.Pirate);
+                            var request = new PawnGenerationRequest(
+                                DefDatabase<PawnKindDef>.GetNamedSilentFail("Pirate_Gunner") ?? PawnKindDefOf.Drifter,
+                                pirates, PawnGenerationContext.NonPlayer,
+                                forceGenerateNewPawn: true, canGeneratePawnRelations: false);
+                            fleshTarget = PawnGenerator.GeneratePawn(request);
+                            GenSpawn.Spawn(fleshTarget, marcy.Map.Center, marcy.Map);
+                        }
+                        fleshTarget.equipment?.DestroyAllEquipment();
+                        fleshTarget.apparel?.DestroyAll();
+                        ParkPawnNear(marcy, fleshTarget, 30);
+                    },
+                    checks =
+                    {
+                        C("blade-vs-flesh", () =>
+                        {
+                            ThingWithComps w = FindMelee(fleshTarget);
+                            return (w?.def == knife, $"pick vs flesh={w?.def?.defName ?? "fists"} armor={fleshTarget.GetStatValue(StatDefOf.ArmorRating_Sharp):F2}");
+                        }),
+                    }
+                },
+                new Phase
+                {
+                    label = "on-vs-armor-picks-blunt",
+                    deadlineTicks = 3000,
+                    checks =
+                    {
+                        C("blunt-vs-armored-mech", () =>
+                        {
+                            Pawn mech = Mech();
+                            ThingWithComps w = FindMelee(mech);
+                            return (w?.def == mace, $"pick vs mech={w?.def?.defName ?? "fists"} sharpArmor={mech.GetStatValue(StatDefOf.ArmorRating_Sharp):F1} bluntArmor={mech.GetStatValue(StatDefOf.ArmorRating_Blunt):F1}");
+                        }),
+                        C("tool-forensics", () =>
+                        {
+                            Pawn mech = Mech();
+                            var sb = new System.Text.StringBuilder();
+                            foreach (ThingDef def in new[] { knife, mace })
+                            {
+                                ThingWithComps inst = Carried(marcy, def);
+                                float score = CESSCompatTactics.Features.TargetScoring.MeleeScore(inst, mech, -1f);
+                                sb.Append($"{def.defName}: score={score:F2} tools=[");
+                                foreach (Verse.Tool t in def.tools)
+                                {
+                                    var tce = t as CombatExtended.ToolCE;
+                                    string caps = string.Join("+", t.capacities.Select(c => c.defName));
+                                    sb.Append(tce != null
+                                        ? $"({caps} pow={t.power:F1} cd={t.cooldownTime:F2} penS={tce.armorPenetrationSharp:F2} penB={tce.armorPenetrationBlunt:F2})"
+                                        : $"({caps} VANILLA pow={t.power:F1})");
+                                }
+                                sb.Append("] ");
+                            }
+                            return (true, sb.ToString());
+                        }, informational: true),
+                    }
+                },
+            };
         }
 
         // -- TACT-1: reload-abort when threatened ---------------------------

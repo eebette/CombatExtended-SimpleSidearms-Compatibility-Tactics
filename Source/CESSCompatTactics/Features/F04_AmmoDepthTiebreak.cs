@@ -10,19 +10,23 @@ using SSCore = PeteTimesSix.SimpleSidearms.SimpleSidearms;
 namespace CESSCompatTactics.Features
 {
     /// <summary>
-    /// Feature 4: ammo-depth tiebreak. The core patch's axis 3 made SS's selection
-    /// binary on ammo (has / hasn't); a gun with 5 loose rounds ranks equal to one
-    /// with 200 spare. Among candidates scoring within a strict epsilon of the
-    /// winner, prefer the one with the deepest ammo reserves.
+    /// Features 4 + 5 share one ranking pass on findBestRangedWeapon — they must
+    /// see the same adjusted scores or they would fight each other.
     ///
-    /// GUARD (strict tiebreak): the epsilon window keeps this subordinate to the
-    /// primary DPS ranking — as a general weighting it would redesign SS scoring.
-    /// Scoring calls the same public entry point the core patch's P03 uses
-    /// (StatCalculator.RangedDPS, itself CE-corrected by P02), so numbers can't
-    /// diverge from the ranking being tiebroken.
+    /// Feature 5 (target-aware loaded-ammo scoring): each candidate's DPS is scaled
+    /// by TargetScoring.RangedMultiplier — penetration of the LOADED projectile vs
+    /// the target's armor, EMP vs mechs. NO ammo switching, NO SelectedAmmo writes.
+    ///
+    /// Feature 4 (ammo-depth tiebreak): among candidates within the epsilon window
+    /// of the (adjusted) winner, prefer deeper ammo reserves. STRICT tiebreak —
+    /// subordinate to the DPS ranking by construction.
+    ///
+    /// Scoring calls the same public entry points the core patch's P02/P03 correct,
+    /// so numbers cannot diverge from the ranking being adjusted. Inert unless a
+    /// relevant toggle is on.
     /// </summary>
     [HarmonyPatch(typeof(GettersFilters), nameof(GettersFilters.findBestRangedWeapon))]
-    public static class AmmoDepthTiebreak_Patch
+    public static class RangedSelection_Patch
     {
         [HarmonyPostfix]
         public static void Postfix(Pawn pawn, LocalTargetInfo? target, bool skipManualUse,
@@ -30,7 +34,10 @@ namespace CESSCompatTactics.Features
             ref (ThingWithComps weapon, float dps, float averageSpeed) __result)
         {
             TacticsSettings settings = TacticsMod.Settings;
-            if (!settings.ammoDepthTiebreak || __result.weapon == null || pawn == null)
+            Pawn targetPawn = target.HasValue ? target.Value.Thing as Pawn : null;
+            bool targetAware = settings.targetAwareAmmoScoring && targetPawn != null;
+            bool tiebreak = settings.ammoDepthTiebreak;
+            if ((!targetAware && !tiebreak) || __result.weapon == null || pawn == null)
             {
                 return;
             }
@@ -39,38 +46,48 @@ namespace CESSCompatTactics.Features
                 ? target.Value.Cell.DistanceTo(pawn.Position)
                 : -1f;
             float bias = SSCore.Settings.SpeedSelectionBiasRanged;
-            float epsilon = settings.tiebreakEpsilonPct / 100f;
-            float floor = __result.dps * (1f - epsilon);
 
-            ThingWithComps bestWeapon = __result.weapon;
-            long bestDepth = AmmoDepth(pawn, bestWeapon);
-            float bestDps = __result.dps;
-
+            var scored = new List<(ThingWithComps weapon, float adjDps)>();
             foreach (ThingWithComps candidate in Candidates(pawn, skipManualUse, skipDangerous, skipEMP, includeEquipped))
             {
-                if (candidate == __result.weapon)
-                {
-                    continue;
-                }
                 float dps = distance >= 0f
                     ? StatCalculator.RangedDPS(candidate, bias, __result.averageSpeed, distance)
                     : StatCalculator.RangedDPSAverage(candidate, bias, __result.averageSpeed);
-                if (dps < floor)
+                if (targetAware)
                 {
-                    continue; // outside the tie window — primary ranking stands
+                    dps *= TargetScoring.RangedMultiplier(candidate, targetPawn);
                 }
-                long depth = AmmoDepth(pawn, candidate);
-                if (depth > bestDepth)
+                scored.Add((candidate, dps));
+            }
+            if (scored.Count == 0)
+            {
+                return;
+            }
+
+            (ThingWithComps weapon, float adjDps) best = scored.MaxBy(s => s.adjDps);
+
+            if (tiebreak)
+            {
+                float floor = best.adjDps * (1f - settings.tiebreakEpsilonPct / 100f);
+                long bestDepth = AmmoDepth(pawn, best.weapon);
+                foreach (var s in scored)
                 {
-                    bestWeapon = candidate;
-                    bestDepth = depth;
-                    bestDps = dps;
+                    if (s.weapon == best.weapon || s.adjDps < floor)
+                    {
+                        continue;
+                    }
+                    long depth = AmmoDepth(pawn, s.weapon);
+                    if (depth > bestDepth)
+                    {
+                        best = s;
+                        bestDepth = depth;
+                    }
                 }
             }
 
-            if (bestWeapon != __result.weapon)
+            if (best.weapon != __result.weapon)
             {
-                __result = (bestWeapon, bestDps, __result.averageSpeed);
+                __result = (best.weapon, best.adjDps, __result.averageSpeed);
             }
         }
 
@@ -104,8 +121,8 @@ namespace CESSCompatTactics.Features
             }
         }
 
-        /// <summary>Rounds on hand for this weapon: magazine + carried spares. Weapons
-        /// outside CE's ammo system never run dry — effectively infinite depth.</summary>
+        /// <summary>Rounds on hand: magazine + carried spares; non-CE weapons never
+        /// run dry — effectively infinite depth.</summary>
         private static long AmmoDepth(Pawn pawn, ThingWithComps weapon)
         {
             CompAmmoUser user = weapon.TryGetComp<CompAmmoUser>();
