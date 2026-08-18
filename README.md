@@ -37,14 +37,21 @@ module, and why **every feature ships opt-in, default OFF**.
    the reload job cleanly and equip it. Estimated 60–80 lines: one Harmony patch on
    CE's reload JobDriver tick. Rationale: manual gizmo click already aborts reload
    instantly (core axis 5), so the value is off-screen pawns.
+   Seam audit 2026-08-18: HOLDS — mid-reload is a CE-only state, arsenal-swap is
+   SS-only capability; meaningless without both. GUARD: never abort a
+   player-forced reload job (`job.playerForced`) — explicit orders are untouchable.
 2. **Attack-order-time weapon selection.** SS's only in-combat swap trigger is
    aim-warmup ticks, which requires an attack job *with the current weapon* — a pawn
    holding a shotgun with a sniper in inventory cannot even be ORDERED to fire at a
    distant target (float menu shows "Out of range" for the equipped weapon; no job →
    no warmup → swap logic never runs; deadlock). Fix shape: patch the float-menu
    ranged-attack option / attack order to consider all carried weapons and swap
-   before the attack job starts. Note: vanilla SS deadlocks identically — see open
-   question about upstreaming.
+   before the attack job starts.
+   Seam audit 2026-08-18: FLAGGED — the deadlock exists in VANILLA SS, so this is
+   SS-domain repair, not a CE+SS seam (CE only amplifies via bigger range spreads).
+   Disposition (pending owner confirmation): upstream SS issue FIRST (on-record,
+   single-topic), implement locally regardless (SS is maintenance-mode), and label
+   in user-facing docs as the module's one SS-side fix.
 3. **Forced-weapon dry fall-through.** SS's `WeaponAssingment` ForcedWeapon /
    ForcedWeaponWhileDrafted branches run before best-ranged logic with zero ammo
    checks (an impossible state in vanilla — nothing runs dry). Under CE a pawn forced
@@ -52,9 +59,15 @@ module, and why **every feature ships opt-in, default OFF**.
    no rounds in magazine AND `CompAmmoUser.HasAmmoOrMagazine == false` (i.e. nothing
    to reload from inventory either). Small fix, but it overrides explicit player
    intent — needs its own toggle.
+   Seam audit 2026-08-18: HOLDS — forced = SS control, dry = CE-only state. GUARD:
+   BYPASS, NEVER CLEAR — the ForcedWeapon flag is SS-owned player state; skip it in
+   selection while truly dry, and it resumes the moment ammo exists again.
 4. **Ammo-depth tiebreak.** Core axis 3 made selection binary (has ammo / hasn't); a
    gun with 5 loose rounds ranks equal to one with 200 spare. Extend the scoring with
    carried-round depth as a tiebreak. New scoring policy — hence here, not the core.
+   Seam audit 2026-08-18: HOLDS — depth is a CE concept, ranking is SS's. GUARD:
+   STRICT tiebreak only — applies when candidates are within an epsilon on the
+   primary DPS ranking; as a general weighting it would redesign SS scoring.
 5. **Target-aware ranking of loaded ammo (settled 2026-08-18 after two descopes).**
    When ranking carried weapons vs a target (same pathways as features 1/2/4), value
    each candidate's CURRENTLY-LOADED ammo against the actual target — penetration vs
@@ -84,6 +97,9 @@ module, and why **every feature ships opt-in, default OFF**.
    under CE's armor system the right pick is target-dependent (blunt vs high-pen
    sharp). Per-target melee selection — likely interacts with the core patch's P06
    (CQC melee axis, `doCQC` path).
+   Seam audit 2026-08-18: HOLDS — inputs are CE `ToolCE` penetration stats and the
+   cost of a wrong pick is CE's armor model. GUARDS: target from the provenance
+   rules only (never invent melee target choice); extend P06's path, don't fork.
 
 **Target provenance (settled 2026-08-18) — "actual target" is never invented here:**
 (a) explicit player order target (feature 2); (b) the stance/job focus target
