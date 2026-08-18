@@ -48,6 +48,14 @@ module, and why **every feature ships opt-in, default OFF**.
    the reload job cleanly and equip it. Estimated 60–80 lines: one Harmony patch on
    CE's reload JobDriver tick. Rationale: manual gizmo click already aborts reload
    instantly (core axis 5), so the value is off-screen pawns.
+   SPEC REFINEMENT (2026-08-18, found by the tact1 harness): findBestRangedWeapon
+   cannot drive the abort — with core axis 3 it counts reloadable-from-inventory
+   weapons as viable, i.e. the gun being reloaded, so it always returns the
+   primary. Mid-reload the comparison is "loaded THIS INSTANT": scan loaded
+   secondaries directly (mag>0, or HasAmmo for magazine-less), score with
+   StatCalculator.RangedDPS at target distance, equip the specific winner via
+   equipSpecificWeaponFromInventory (equipBest would re-pick the reloadable
+   primary and loop).
    Seam audit 2026-08-18: HOLDS — mid-reload is a CE-only state, arsenal-swap is
    SS-only capability; meaningless without both. GUARD: never abort a
    player-forced reload job (`job.playerForced`) — explicit orders are untouchable.

@@ -74,17 +74,41 @@ namespace CESSCompatTactics.Features
                 return; // not threatened — finish the reload in peace
             }
 
-            var (best, _, _) = GettersFilters.findBestRangedWeapon(pawn, new LocalTargetInfo(target));
-            if (best == null || best == pawn.equipment?.Primary || !IsLoaded(best))
+            // NOTE: SS's ranking (with the core patch's axis 3) counts
+            // reloadable-from-inventory weapons as viable — which is exactly the gun
+            // being reloaded right now. Mid-reload the comparison must be "loaded THIS
+            // INSTANT", so scan loaded secondaries directly instead of findBest, and
+            // equip the specific winner (equipBest would re-pick the reloadable
+            // primary and loop).
+            float distance = target.Position.DistanceTo(pawn.Position);
+            float bias = PeteTimesSix.SimpleSidearms.SimpleSidearms.Settings.SpeedSelectionBiasRanged;
+            ThingWithComps winner = null;
+            float winnerDps = 0f;
+            foreach (ThingWithComps weapon in pawn.GetCarriedWeapons(includeEquipped: false, includeTools: false))
             {
-                return;
+                if (!weapon.def.IsRangedWeapon || !IsLoaded(weapon)
+                    || GettersFilters.isManualUse(weapon)
+                    || GettersFilters.isDangerousWeapon(weapon)
+                    || GettersFilters.isEMPWeapon(weapon))
+                {
+                    continue;
+                }
+                float dps = StatCalculator.RangedDPS(weapon, bias, 0f, distance);
+                if (dps > winnerDps)
+                {
+                    winnerDps = dps;
+                    winner = weapon;
+                }
+            }
+            if (winner == null)
+            {
+                return; // nothing loaded to swap to — keep reloading
             }
 
             // Mirror the core patch's explicit-swap semantics (axis 5): end the reload
-            // cleanly FIRST — its guard blocks SS preference swaps while the job runs.
+            // cleanly FIRST — its guard blocks SS-side swaps while the job runs.
             pawn.jobs.EndCurrentJob(JobCondition.InterruptForced);
-            WeaponAssingment.equipBestWeaponFromInventoryByPreference(pawn, DroppingModeEnum.Combat,
-                target: target as Pawn);
+            WeaponAssingment.equipSpecificWeaponFromInventory(pawn, winner, dropCurrent: false, intentionalDrop: false);
         }
 
         private static bool IsLoaded(ThingWithComps weapon)
@@ -94,7 +118,9 @@ namespace CESSCompatTactics.Features
             {
                 return true; // no CE ammo concept — always usable
             }
-            return !user.HasMagazine || user.CurMagCount > 0;
+            // Loaded THIS INSTANT: rounds in the magazine, or for magazine-less
+            // weapons, rounds on hand to fire from directly.
+            return user.HasMagazine ? user.CurMagCount > 0 : user.HasAmmo;
         }
 
         private static float MaxCarriedRange(Pawn pawn)

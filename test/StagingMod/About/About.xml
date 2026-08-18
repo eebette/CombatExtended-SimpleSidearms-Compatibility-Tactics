@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ModMetaData>
+    <name>CESS Tactics Test Staging (dev only)</name>
+    <author>eebette</author>
+    <packageId>eebette.cesstacticsteststaging</packageId>
+    <supportedVersions>
+        <li>1.6</li>
+    </supportedVersions>
+    <description>Dev-only: builds the TACT-* staged saves and runs the tact* assert scenarios. Inert without -cetactstage / -ceassert=tact* CLI args.</description>
+</ModMetaData>
