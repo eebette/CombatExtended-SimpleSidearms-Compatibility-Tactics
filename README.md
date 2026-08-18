@@ -85,6 +85,19 @@ module, and why **every feature ships opt-in, default OFF**.
    sharp). Per-target melee selection — likely interacts with the core patch's P06
    (CQC melee axis, `doCQC` path).
 
+**Target provenance (settled 2026-08-18) — "actual target" is never invented here:**
+(a) explicit player order target (feature 2); (b) the stance/job focus target
+(warmup swap, CQC attacker) — already flowing through SS pathways; (c) when no
+target is in hand (reload-abort), vanilla `AttackTargetFinder.BestAttackTarget`
+supplies it — and its non-null result IS the "threatened" trigger condition, so
+trigger and target are one computation. Finder semantics are inherited wholesale
+(distance/LOS/threat weighting, fleeing handling via its scan flags — no pursuit
+policy of ours). Range is evaluated per CANDIDATE weapon at the target's distance
+(SS's candidate filter + core P02 distance DPS already do this); if every carried
+weapon is out of range, no swap. No target anywhere → features don't fire and
+scoring stays in SS's existing target-less mode (`findBestRangedWeapon`'s target
+parameter is already nullable with defined behavior).
+
 Resolved elsewhere / rejected (do not re-add): ammo resupply for remembered sidearms
 (became the Loadouts module); SS bulk-based carry sliders (SS-domain settings UI —
 upstream suggestion territory, never our code); grenade automation (SS excludes
