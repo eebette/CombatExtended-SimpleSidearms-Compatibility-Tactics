@@ -28,7 +28,8 @@ module, and why **every feature ships opt-in, default OFF**.
 - Dependencies (About.xml): Harmony, Combat Extended, Simple Sidearms, the core compat patch.
 - RimWorld 1.6.
 
-## Feature scope — six features, from the 2026-08 gap sweep
+## Feature scope — five features, from the 2026-08 gap sweep
+(numbering kept for history; #2 was descoped to a standalone mod)
 
 1. **Reload-abort when threatened.** While a pawn runs CE's reload job and a hostile
    is targetable, periodically (~30 ticks) call SS's
@@ -106,7 +107,8 @@ module, and why **every feature ships opt-in, default OFF**.
    rules only (never invent melee target choice); extend P06's path, don't fork.
 
 **Target provenance (settled 2026-08-18) — "actual target" is never invented here:**
-(a) explicit player order target (feature 2); (b) the stance/job focus target
+(a) explicit player order target (attack orders; the moment now owned by the
+standalone Better Attack Orders mod when present); (b) the stance/job focus target
 (warmup swap, CQC attacker) — already flowing through SS pathways; (c) when no
 target is in hand (reload-abort), vanilla `AttackTargetFinder.BestAttackTarget`
 supplies it — and its non-null result IS the "threatened" trigger condition, so
@@ -186,21 +188,25 @@ stomps, additive UI over replaced UI, opt-in default-off unless an upstream
 convention licenses the default. For THIS module: everything is by definition new
 policy, so everything is opt-in default-off, full stop.
 
+## Sizing (2026-08-18, post-descopes)
+
+Feature 1 ~60–80 lines; 3 ~30–50; 4 ~40–60; 5 ~50–80; 6 ~100–150. Plus staging
+scenarios + assert runner (the expensive part for combat-timing features — budget
+as much as the features themselves). Roughly 1.5–2 sessions to feature-complete
+with automated tests.
+
 ## Open questions (decide before/while building)
 
-1. Feature 2 fixes a deadlock that exists in *vanilla* SS too — file it upstream as
-   an SS issue/PR instead of (or before) patching here? Upstream-first matches the
-   suite ethos. (SS has no license, which complicates PRs — issue with repro may be
-   the right vehicle; see core repo issue #5 for the outreach tracking pattern.)
-2. Settings surface: master enable + per-feature toggles (all default off) is the
-   assumed shape — confirm. Thresholds needing definition: reload-abort threat
-   distance, swap hysteresis (prevent A↔B oscillation when scores are close).
-3. Reload-abort: after the threat clears, resume the aborted reload automatically or
+1. Settings surface: master enable + per-feature toggles (all default off) is the
+   assumed shape — confirm. Thresholds needing definition: reload-abort swap
+   hysteresis (prevent A↔B oscillation when scores are close); feature 4's
+   tiebreak epsilon.
+2. Reload-abort: after the threat clears, resume the aborted reload automatically or
    leave it to CE's normal loadout/reload flow?
-4. Feature 5: drafted-only, or also undrafted defensive fire?
-5. Feature 6: implement inside/alongside core P06's CQC path or as an independent
+3. Feature 6: implement inside/alongside core P06's CQC path or as an independent
    selection patch?
-6. Ship order proposal: 1+2 first (highest player-visible value), then 3+4 (small),
-   then 5+6 (hardest). Confirm.
-7. Versioning/save-compat: follow the suite policy being defined in core repo
-   issue #4.
+4. Ship order proposal: v0.1 = 1+3+4 (small, highest value), v0.2 = 5+6 (the two
+   target-effectiveness scoring terms — natural pair sharing machinery). Confirm.
+5. Versioning/save-compat: the suite policy is settled in the core repo's
+   RELEASING.md (issue #4, closed) — inherit it; this module is stateless, so both
+   add/remove-mid-save guarantees should hold trivially. Verify at release.
