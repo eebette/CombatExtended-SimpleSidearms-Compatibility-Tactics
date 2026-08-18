@@ -50,7 +50,7 @@ namespace CESSCompatTactics
             listing.CheckboxLabeled("Reload-abort when threatened", ref Settings.reloadAbort,
                 "A pawn mid-reload with a hostile in effective range swaps to a loaded carried weapon instead of finishing the reload. Player-ordered reloads are never interrupted; the abandoned reload resumes via CE's normal idle reload behavior.");
             listing.CheckboxLabeled("Forced-weapon dry fall-through", ref Settings.forcedDryFallthrough,
-                "A pawn forced onto a weapon with an empty magazine AND no compatible ammo carried temporarily uses normal weapon selection. The forced setting itself is never cleared — it resumes the moment ammo is available.");
+                "Under CE a forced weapon can run completely dry, which vanilla forcing never anticipated — so \"use this weapon\" has two possible meanings. OFF (default): hold it no matter what, literally as ordered. ON: prefer it while usable, fall back to normal selection while it is truly out of ammo. The forced setting itself is never cleared and resumes the moment ammo is available.");
             listing.CheckboxLabeled("Ammo-depth tiebreak", ref Settings.ammoDepthTiebreak,
                 "When two carried guns rank within the margin below, prefer the one with deeper ammo reserves (magazine + carried spares).");
             listing.Label($"Tiebreak margin: {Settings.tiebreakEpsilonPct}% of the top score");

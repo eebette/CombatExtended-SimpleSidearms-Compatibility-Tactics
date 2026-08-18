@@ -83,8 +83,12 @@ stays OFF by default. Every feature keeps its own toggle.
    checks (an impossible state in vanilla — nothing runs dry). Under CE a pawn forced
    onto a dry gun keeps holding it. Fall through to normal selection when truly dry:
    no rounds in magazine AND `CompAmmoUser.HasAmmoOrMagazine == false` (i.e. nothing
-   to reload from inventory either). Small fix, but it overrides explicit player
-   intent — needs its own toggle.
+   to reload from inventory either). Framing (settled 2026-08-18): this is not an
+   intent OVERRIDE but a DISAMBIGUATION — vanilla forcing was unambiguous (a
+   forced gun always works); CE created a hole in the order's meaning ("prefer
+   while usable" vs "hold no matter what"). The default preserves the literal
+   reading; the toggle lets the player state which they meant. Off by default
+   for that reason, not out of caution.
    Seam audit 2026-08-18: HOLDS — forced = SS control, dry = CE-only state. GUARD:
    BYPASS, NEVER CLEAR — the ForcedWeapon flag is SS-owned player state; skip it in
    selection while truly dry, and it resumes the moment ammo exists again.
