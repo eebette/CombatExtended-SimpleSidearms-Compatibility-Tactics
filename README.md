@@ -47,11 +47,15 @@ module, and why **every feature ships opt-in, default OFF**.
    no warmup → swap logic never runs; deadlock). Fix shape: patch the float-menu
    ranged-attack option / attack order to consider all carried weapons and swap
    before the attack job starts.
-   Seam audit 2026-08-18: FLAGGED — the deadlock exists in VANILLA SS, so this is
-   SS-domain repair, not a CE+SS seam (CE only amplifies via bigger range spreads).
-   Disposition (pending owner confirmation): upstream SS issue FIRST (on-record,
-   single-topic), implement locally regardless (SS is maintenance-mode), and label
-   in user-facing docs as the module's one SS-side fix.
+   **DESCOPED 2026-08-18 (owner's call, via the seam audit): now a STANDALONE
+   MOD** — the deadlock exists in vanilla SS, so it is SS-domain repair, not a
+   CE+SS seam. Moved to
+   https://github.com/eebette/Better-Attack-Orders-for-Simple-Sidearms
+   (Harmony+SS only; gains CE-awareness automatically via the core patch's
+   Harmony patches when the suite is present — zero coupling). Upstream-first SS
+   issue remains that repo's step one. Features 1/4/5 still reference
+   attack-order-time as a selection pathway — when built, this module hooks the
+   standalone mod's moment if present, or ships without it.
 3. **Forced-weapon dry fall-through.** SS's `WeaponAssingment` ForcedWeapon /
    ForcedWeaponWhileDrafted branches run before best-ranged logic with zero ammo
    checks (an impossible state in vanilla — nothing runs dry). Under CE a pawn forced
