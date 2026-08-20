@@ -29,7 +29,19 @@ IS the opt-in, so the headline behaviors ship ON** — except any feature that
 overrides explicit player intent (currently only forced-dry fall-through), which
 stays OFF by default. Every feature keeps its own toggle.
 
-## Family
+## The suite
+
+[![Compatibility Patch](Media/Badge_Patch.png)](https://github.com/eebette/CombatExtended-SimpleSidearms-Compatibility-Patch)
+
+The core, repair-only patch — **required** by this module. Eleven repair axes so
+CE and Simple Sidearms work as their authors intended.
+
+[![Compatibility Module - Loadouts](Media/Badge_Loadouts.png)](https://github.com/eebette/CombatExtended-SimpleSidearms-Compatibility-Loadouts)
+
+Sibling module (not required): CE loadouts and Simple Sidearms memory as one
+mental model — loadout weapons auto-remembered as sidearms, ammo sustainment.
+
+## Family (build/dependency detail)
 
 | Mod | Repo | Relationship |
 |-----|------|--------------|
