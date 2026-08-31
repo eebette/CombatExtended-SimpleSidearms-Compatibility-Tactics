@@ -19,11 +19,32 @@ namespace CESSCompatTactics.Features
     /// melee target choice is invented here. Extends the same path core P06
     /// feeds; no fork. Inert when the toggle is off or no target flows in.
     /// </summary>
-    [HarmonyPatch(typeof(GettersFilters), nameof(GettersFilters.findBestMeleeWeapon))]
+    [HarmonyPatch(typeof(GettersFilters), nameof(GettersFilters.findBestMeleeWeapon),
+                  new[] { typeof(Pawn), typeof(ThingWithComps), typeof(bool), typeof(bool), typeof(Pawn) },
+                  new[] { ArgumentType.Normal, ArgumentType.Out, ArgumentType.Normal, ArgumentType.Normal, ArgumentType.Normal })]
     public static class ArmorAwareMelee_Patch
     {
+        public static bool Prepare() => PatchGuard.Require(typeof(GettersFilters), "findBestMeleeWeapon",
+            new[] { typeof(Pawn), typeof(ThingWithComps).MakeByRefType(), typeof(bool), typeof(bool), typeof(Pawn) },
+            "armor-aware melee choice is inactive.");
+
         [HarmonyPostfix]
         public static void Postfix(Pawn pawn, ref ThingWithComps result,
+            bool includeEquipped, bool includeRangedWithBash, Pawn target, ref bool __result)
+        {
+            try
+            {
+                PostfixInner(pawn, ref result, includeEquipped, includeRangedWithBash, target, ref __result);
+            }
+            catch (System.Exception e)
+            {
+                Log.ErrorOnce(PatchGuard.LogPrefix + "Melee re-rank failed; Simple Sidearms' own "
+                              + "pick stands. " + e, 0x54414304);
+            }
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void PostfixInner(Pawn pawn, ref ThingWithComps result,
             bool includeEquipped, bool includeRangedWithBash, Pawn target, ref bool __result)
         {
             if (!TacticsMod.Settings.armorAwareMelee || target == null || pawn == null)

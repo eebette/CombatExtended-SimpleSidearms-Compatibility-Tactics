@@ -66,10 +66,42 @@ namespace CESSCompatTactics
     [StaticConstructorOnStartup]
     public static class Bootstrap
     {
+        public const string HarmonyId = "eebette.CESimpleSidearmsCompat.Tactics";
+
         static Bootstrap()
         {
-            new Harmony("eebette.CESimpleSidearmsCompat.Tactics").PatchAll(typeof(Bootstrap).Assembly);
-            Log.Message("[CE+SS Tactics] Patches installed.");
+            // Per class, not PatchAll: one class's binding failure (an upstream member
+            // moved) costs that one feature with a named error, not the whole module.
+            var harmony = new Harmony(HarmonyId);
+            int applied = 0;
+            var failures = new System.Collections.Generic.List<string>();
+            foreach (System.Type type in typeof(Bootstrap).Assembly.GetTypes())
+            {
+                if (type.GetCustomAttributes(typeof(HarmonyPatch), inherit: false).Length == 0)
+                {
+                    continue;
+                }
+                try
+                {
+                    harmony.CreateClassProcessor(type).Patch();
+                    applied++;
+                }
+                catch (System.Exception e)
+                {
+                    failures.Add(type.Name);
+                    Log.Error($"{PatchGuard.LogPrefix}Patch class {type.Name} could not be applied — "
+                              + $"that one feature is inactive, the others still work. {e}");
+                }
+            }
+            if (failures.Count > 0)
+            {
+                Log.Warning($"{PatchGuard.LogPrefix}Installed {applied} patch class(es); "
+                            + $"{failures.Count} failed ({string.Join(", ", failures)}).");
+            }
+            else
+            {
+                Log.Message($"{PatchGuard.LogPrefix}Patches installed ({applied} patch classes).");
+            }
         }
     }
 }

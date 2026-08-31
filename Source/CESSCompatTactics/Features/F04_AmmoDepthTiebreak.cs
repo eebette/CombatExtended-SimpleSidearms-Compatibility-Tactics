@@ -25,11 +25,32 @@ namespace CESSCompatTactics.Features
     /// so numbers cannot diverge from the ranking being adjusted. Inert unless a
     /// relevant toggle is on.
     /// </summary>
-    [HarmonyPatch(typeof(GettersFilters), nameof(GettersFilters.findBestRangedWeapon))]
+    [HarmonyPatch(typeof(GettersFilters), nameof(GettersFilters.findBestRangedWeapon),
+                  new[] { typeof(Pawn), typeof(LocalTargetInfo?), typeof(bool), typeof(bool), typeof(bool), typeof(bool) })]
     public static class RangedSelection_Patch
     {
+        public static bool Prepare() => PatchGuard.Require(typeof(GettersFilters), "findBestRangedWeapon",
+            new[] { typeof(Pawn), typeof(LocalTargetInfo?), typeof(bool), typeof(bool), typeof(bool), typeof(bool) },
+            "target-aware ammo scoring and the ammo-depth tiebreak are inactive.");
+
         [HarmonyPostfix]
         public static void Postfix(Pawn pawn, LocalTargetInfo? target, bool skipManualUse,
+            bool skipDangerous, bool skipEMP, bool includeEquipped,
+            ref (ThingWithComps weapon, float dps, float averageSpeed) __result)
+        {
+            try
+            {
+                PostfixInner(pawn, target, skipManualUse, skipDangerous, skipEMP, includeEquipped, ref __result);
+            }
+            catch (System.Exception e)
+            {
+                Log.ErrorOnce(PatchGuard.LogPrefix + "Ranged re-rank failed; Simple Sidearms' own "
+                              + "pick stands. " + e, 0x54414303);
+            }
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void PostfixInner(Pawn pawn, LocalTargetInfo? target, bool skipManualUse,
             bool skipDangerous, bool skipEMP, bool includeEquipped,
             ref (ThingWithComps weapon, float dps, float averageSpeed) __result)
         {

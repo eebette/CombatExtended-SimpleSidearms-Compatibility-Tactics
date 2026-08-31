@@ -54,7 +54,16 @@ namespace CESSCompatTactics.Features
                 {
                     continue;
                 }
-                TryAbort(pawn);
+                try
+                {
+                    TryAbort(pawn);
+                }
+                catch (System.Exception e)
+                {
+                    // Once per session, not per tick: this runs from the game loop.
+                    Log.ErrorOnce(PatchGuard.LogPrefix + "Reload-abort scan failed for " + pawn + ". " + e,
+                                  0x54414305 ^ (pawn?.thingIDNumber ?? 0));
+                }
             }
         }
 
@@ -107,7 +116,10 @@ namespace CESSCompatTactics.Features
 
             // Mirror the core patch's explicit-swap semantics (axis 5): end the reload
             // cleanly FIRST — its guard blocks SS-side swaps while the job runs.
-            pawn.jobs.EndCurrentJob(JobCondition.InterruptForced);
+            // startNewJob:false, deliberately: the default restarts the think tree
+            // synchronously INSIDE this call, and whatever it hands the pawn runs
+            // before the equip below — the swap must land on a jobless pawn.
+            pawn.jobs.EndCurrentJob(JobCondition.InterruptForced, startNewJob: false);
             WeaponAssingment.equipSpecificWeaponFromInventory(pawn, winner, dropCurrent: false, intentionalDrop: false);
         }
 

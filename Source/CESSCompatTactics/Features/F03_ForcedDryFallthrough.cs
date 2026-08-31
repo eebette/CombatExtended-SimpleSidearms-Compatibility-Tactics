@@ -22,13 +22,32 @@ namespace CESSCompatTactics.Features
     /// restored in finally — the moment ammo exists again the forced weapon
     /// resumes on its own.
     /// </summary>
-    [HarmonyPatch(typeof(WeaponAssingment), nameof(WeaponAssingment.equipBestWeaponFromInventoryByPreference))]
+    [HarmonyPatch(typeof(WeaponAssingment), nameof(WeaponAssingment.equipBestWeaponFromInventoryByPreference),
+                  new[] { typeof(Pawn), typeof(DroppingModeEnum), typeof(PrimaryWeaponMode?), typeof(Pawn) })]
     public static class ForcedDryFallthrough_Patch
     {
+        public static bool Prepare() => PatchGuard.Require(typeof(WeaponAssingment), "equipBestWeaponFromInventoryByPreference",
+            new[] { typeof(Pawn), typeof(DroppingModeEnum), typeof(PrimaryWeaponMode?), typeof(Pawn) },
+            "a forced weapon that runs completely dry will be held no matter what.");
+
         [HarmonyPrefix]
         public static void Prefix(Pawn pawn, out (CompSidearmMemory memory, ThingDefStuffDefPair? forced, ThingDefStuffDefPair? forcedDrafted)? __state)
         {
             __state = null;
+            try
+            {
+                PrefixInner(pawn, ref __state);
+            }
+            catch (System.Exception e)
+            {
+                Log.ErrorOnce(PatchGuard.LogPrefix + "Forced-dry check failed; the forced weapon is "
+                              + "honored literally. " + e, 0x54414301);
+            }
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void PrefixInner(Pawn pawn, ref (CompSidearmMemory memory, ThingDefStuffDefPair? forced, ThingDefStuffDefPair? forcedDrafted)? __state)
+        {
             if (!TacticsMod.Settings.forcedDryFallthrough || pawn == null)
             {
                 return;
@@ -57,8 +76,13 @@ namespace CESSCompatTactics.Features
             }
         }
 
-        [HarmonyPostfix]
-        public static void Postfix((CompSidearmMemory memory, ThingDefStuffDefPair? forced, ThingDefStuffDefPair? forcedDrafted)? __state)
+        // A FINALIZER, not a postfix: postfixes are skipped when the original (or a
+        // later prefix) throws, and the state being restored here is the PLAYER'S
+        // forced-weapon setting — hidden for the duration of one call under the
+        // "bypass, never clear" guard. A throw leaving it nulled would be this
+        // feature destroying the exact intent it exists to respect.
+        [HarmonyFinalizer]
+        public static void Finalizer((CompSidearmMemory memory, ThingDefStuffDefPair? forced, ThingDefStuffDefPair? forcedDrafted)? __state)
         {
             if (__state == null)
             {
@@ -101,18 +125,30 @@ namespace CESSCompatTactics.Features
     /// explains the two readings ("hold no matter what" vs "prefer while usable")
     /// and where the toggle lives. Vanilla's own teaching surface — no popups.
     /// </summary>
-    [HarmonyPatch(typeof(CompSidearmMemory), nameof(CompSidearmMemory.SetWeaponAsForced))]
+    [HarmonyPatch(typeof(CompSidearmMemory), nameof(CompSidearmMemory.SetWeaponAsForced),
+                  new[] { typeof(ThingDefStuffDefPair), typeof(bool) })]
     public static class ForcedWeaponLesson_Patch
     {
         private static ConceptDef concept;
 
+        public static bool Prepare() => PatchGuard.Require(typeof(CompSidearmMemory), "SetWeaponAsForced",
+            new[] { typeof(ThingDefStuffDefPair), typeof(bool) },
+            "the one-time note explaining the forced-dry toggle will not appear.");
+
         [HarmonyPostfix]
         public static void Postfix()
         {
-            concept = concept ?? DefDatabase<ConceptDef>.GetNamedSilentFail("CESSTactics_ForcedDryChoice");
-            if (concept != null)
+            try
             {
-                LessonAutoActivator.TeachOpportunity(concept, OpportunityType.GoodToKnow);
+                concept = concept ?? DefDatabase<ConceptDef>.GetNamedSilentFail("CESSTactics_ForcedDryChoice");
+                if (concept != null)
+                {
+                    LessonAutoActivator.TeachOpportunity(concept, OpportunityType.GoodToKnow);
+                }
+            }
+            catch (System.Exception e)
+            {
+                Log.ErrorOnce(PatchGuard.LogPrefix + "Forced-dry lesson note failed. " + e, 0x54414302);
             }
         }
     }
