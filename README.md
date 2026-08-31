@@ -53,8 +53,9 @@ mental model — loadout weapons auto-remembered as sidearms, ammo sustainment.
 - Dependencies (About.xml): Harmony, Combat Extended, Simple Sidearms, the core compat patch.
 - RimWorld 1.6.
 
-## Feature scope — five features, from the 2026-08 gap sweep
-(numbering kept for history; #2 was descoped to a standalone mod)
+## Feature scope — from the 2026-08 gap sweep
+(numbering kept for history; #2 was descoped to a standalone mod; #7 added
+2026-08-31 by owner ruling)
 
 1. **Reload-abort when threatened.** While a pawn runs CE's reload job and a hostile
    is targetable, periodically (~30 ticks) call SS's
@@ -142,6 +143,16 @@ mental model — loadout weapons auto-remembered as sidearms, ammo sustainment.
    Seam audit 2026-08-18: HOLDS — inputs are CE `ToolCE` penetration stats and the
    cost of a wrong pick is CE's armor model. GUARDS: target from the provenance
    rules only (never invent melee target choice); extend P06's path, don't fork.
+
+7. **Drafted sidearm top-off (added 2026-08-31).** CE's own JobGiver_CheckReload
+   tops off every inventory magazine while undrafted, and opportunistically
+   reloads the PRIMARY while drafted during a combat lull (post-fight cooldown,
+   no hostile inside the safe distance). The gap: a drafted pawn's sidearms
+   stay empty until undraft. One postfix extends CE's drafted lull-reload from
+   "primary" to "primary and sidearms", re-reading CE's own gates per sidearm
+   (opportunistic mode, per-weapon reload threshold, cooldown, safe distance —
+   its predicate mirrored exactly, downed hostiles included). No new trigger,
+   no job injection: CE's think-tree node schedules it.
 
 **Target provenance (settled 2026-08-18) — "actual target" is never invented here:**
 (a) explicit player order target (attack orders; the moment now owned by the

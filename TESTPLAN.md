@@ -23,8 +23,9 @@ tact3→TACT-3-tiebreak, tact4→TACT-4-ammo-target, tact5→TACT-5-melee-target
 
 - **Phase 0 census** in every scenario: reflection sweep of
   `Harmony.GetAllPatchedMethods()` for owner `eebette.CESimpleSidearmsCompat.Tactics`
-  — ≥ 4 patched methods (F03 ×2, F04, F06; F01 is a GameComponent and has no
-  census line) — plus a startup-error sweep of the baselined log.
+  — ≥ 7 patched methods (F03 ×2, F04's selection scope ×3, F06, F07; F01 is a
+  GameComponent and has no census line) — plus a startup-error sweep of the
+  baselined log.
 - **Module isolation**: the runner disables the Loadouts module by reflection
   (`CESimpleSidearmsCompat.Loadouts.LoadoutsMod`) and asserts BOTH sentinels —
   packageId absent from the running mod list and no Harmony owner — erroring
@@ -35,9 +36,9 @@ tact3→TACT-3-tiebreak, tact4→TACT-4-ammo-target, tact5→TACT-5-melee-target
   each phase that needs a toggle enables it ITSELF (arrange or mutate), so
   isolated runs test what the label claims.
 
-## Green pass — 2026-08-31 (T2: CE-true target scoring)
+## Green pass — 2026-08-31 (T2: CE-true target scoring; F07 + the F04 rework)
 
-20 phases (15 behavioral + 5 census), sequenced AND isolated:
+24 phases (18 behavioral + 6 census), sequenced AND isolated:
 
 - **tact1 (reload-abort, F01)**: feature-off reload completes; feature-on
   mid-reload swap to the loaded pistol with a hostile INSIDE the pistol's CE
@@ -58,6 +59,12 @@ tact3→TACT-3-tiebreak, tact4→TACT-4-ammo-target, tact5→TACT-5-melee-target
   CE damage-per-second, the feature's headline flip); vs centipede plate every
   through-armor fraction is zero and F06 defers to SS's own P12-backed pick
   (the mace as least-bad).
+- **tact6 (drafted sidearm top-off, F07 — shares TACT-1's save)**: feature-off
+  a drafted pawn's empty sidearm stays empty through a quiet lull (invariant
+  held across the window); feature-on the lull fills it through CE's own job
+  flow; a hostile inside CE's safe distance blocks it — staged with a DOWNED
+  raider on purpose, because CE's predicate counts downed hostiles and a downed
+  raider cannot beat up the defenseless subject during the negative window.
 
 ## Ledger — what the harness caught
 
@@ -117,7 +124,26 @@ tact3→TACT-3-tiebreak, tact4→TACT-4-ammo-target, tact5→TACT-5-melee-target
    groups are weapon anatomy (Blade/Point), which no human has. Every CE blade
    scored as its handle. Fixed in the core patch (axis 13), pinned there by
    `ce-melee-damage-signal`; this suite's tact5 covers the consuming side.
-9. **Isolated runs exposed hidden phase coupling**: tact2/tact3 later phases
+9. **F04's first shape was the transcription the rules ban (reworked).** Its
+   postfix re-enumerated candidates through a hand-copied filter chain that had
+   already drifted from SS's real one — it missed the biocode check, the
+   VFE-shield and Tacticowl exclusions, and the per-weapon min/max range
+   window, so the re-rank could crown a weapon SS itself refused. The rework
+   composes two proven core-patch patterns instead: a call-lifetime SCOPE
+   opened by a prefix on findBestRangedWeapon (P01's pattern, closed by a
+   finalizer), and postfixes on the scoring entry points SS calls inside it
+   (RangedDPS / RangedDPSAverage) that adjust the outgoing score by the target
+   factor and RECORD every (weapon, raw, adjusted) pair. SS's own loop,
+   filters, and comparison pick natively; the tiebreak and the all-zero defer
+   read the records. Nothing enumerates twice; a new SS filter is inherited
+   automatically. P02's cache is untouched (it stores in its prefix, before
+   the postfix rewrites the one outgoing value).
+10. **The N() convention is the INVARIANT, not the trip.** A negative check's
+   eval returns true while the world stays good; the first false trips the
+   phase. tact6's first draft returned the trip condition and the phase failed
+   with the world perfectly fine — the helper's doc comment now states the
+   convention so the next phase author doesn't rediscover it.
+11. **Isolated runs exposed hidden phase coupling**: tact2/tact3 later phases
    inherited forced flags, magazine drains, and feature toggles from earlier
    phases' mutates; tact1/tact5's final phases "passed" isolated with their
    feature OFF (vacuously — tact5's mace pick can even land via the core
@@ -140,11 +166,20 @@ reverted; script pattern in the compat repo's TESTPLAN):
 - **Core P13 Prepare→false** (cross-repo): compat census red (22 < 23),
   `ce-melee-damage-signal` red, AND tact5's knife-vs-flesh red — the module's
   phases detect a regression in the dependency they consume.
-- **F04 zero-defer removed**: came back GREEN — with the branch gone, MaxBy
-  over all-zero scores returns the FIRST carried candidate, which on this save
-  is the raw pick itself. The scratch cannot flip the outcome here (documented
-  coincidence, order-dependent); the phase's ability to fail is proven anyway —
-  the un-parked isolated run turned it red (see the park note in its arrange).
+- **F04 zero-defer removed** (pre-rework note, kept for history): came back
+  GREEN — with the branch gone, MaxBy over all-zero scores returned the first
+  candidate, coincidentally the raw pick. Under the rework the defer lives in
+  the selection postfix reading recorded pairs; the scope A/B below covers it.
+- **F04 selection scope Prepare→false** (the rework's leg): census red (6 < 7)
+  in BOTH scenarios and tact3's deeper-twin red — the deterministic behavioral
+  proof. tact4's flip phase varies under the scratch (observed red once, and
+  once a chaos-latched green: the phase drags red, the live scyther charges,
+  and mid-brawl weapon churn can transiently flap the pick to the rifle, which
+  the latching positive catches). The scenario still fails through the census
+  both times; the defer phase's A-leg green is the OFF reason itself (no
+  multipliers → SS's raw shotgun pick is exactly what it expects).
+- **F07 Prepare→false**: census red (6 < 7) AND tact6's lull top-off red — the
+  sidearm stays empty through the lull with the patch gone.
 - **F06 de-bias removed**: tact5 `on-vs-flesh-picks-blade` red (the generic
   (1+pen) bonus hands flesh back to the mace).
 

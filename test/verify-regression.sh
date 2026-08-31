@@ -23,6 +23,7 @@ case "$SCENARIO" in
     tact3) SAVE="TACT-3-tiebreak" ;;
     tact4) SAVE="TACT-4-ammo-target" ;;
     tact5) SAVE="TACT-5-melee-target" ;;
+    tact6) SAVE="TACT-1-reload-abort" ;;
     *) echo "!! unknown scenario '$SCENARIO'" >&2; exit 2 ;;
 esac
 

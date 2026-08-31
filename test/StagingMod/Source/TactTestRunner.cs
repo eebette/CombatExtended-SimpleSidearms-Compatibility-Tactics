@@ -254,11 +254,13 @@ namespace CESSTacticsTestStaging
                                 return info != null && info.Owners.Contains("eebette.CESimpleSidearmsCompat.Tactics");
                             })
                             .ToList();
-                        // 4 distinct methods today: equipBestWeaponFromInventoryByPreference
+                        // 7 distinct methods today: equipBestWeaponFromInventoryByPreference
                         // (forced-dry), SetWeaponAsForced (lesson note), findBestRangedWeapon
-                        // (tiebreak + target-aware), findBestMeleeWeapon (armor-aware).
-                        return (mine.Count >= 4,
-                            $"methods patched by eebette.CESimpleSidearmsCompat.Tactics={mine.Count} (want >= 4): "
+                        // (selection scope), RangedDPS + RangedDPSAverage (in-scope score
+                        // adjustment/recording), findBestMeleeWeapon (armor-aware),
+                        // JobGiver_CheckReload.DoReloadCheck (drafted sidearm top-off).
+                        return (mine.Count >= 7,
+                            $"methods patched by eebette.CESimpleSidearmsCompat.Tactics={mine.Count} (want >= 7): "
                             + string.Join(", ", mine.Select(m => m.DeclaringType?.Name + "." + m.Name).OrderBy(n => n)));
                     }),
                 }
@@ -273,6 +275,7 @@ namespace CESSTacticsTestStaging
             TacticsMod.Settings.tiebreakEpsilonPct = 10;
             TacticsMod.Settings.targetAwareAmmoScoring = false;
             TacticsMod.Settings.armorAwareMelee = false;
+            TacticsMod.Settings.draftedSidearmReload = false;
         }
 
         private static void DisableLoadoutsModule()
@@ -601,7 +604,9 @@ namespace CESSTacticsTestStaging
             return new Check { name = name, eval = eval, informational = informational };
         }
 
-        /// <summary>A must-not-happen check, held across the whole phase.</summary>
+        /// <summary>An invariant held across the whole phase: eval returns TRUE while
+        /// the world stays good, and the first FALSE trips the phase (the compat
+        /// suite's convention — not "return true when the bad thing happens").</summary>
         private static Check N(string name, Func<(bool, string)> eval)
         {
             return new Check { name = name, eval = eval, negative = true };
@@ -677,8 +682,130 @@ namespace CESSTacticsTestStaging
                 case "tact3": return BuildTact3();
                 case "tact4": return BuildTact4();
                 case "tact5": return BuildTact5();
+                case "tact6": return BuildTact6();
                 default: throw new InvalidOperationException("Unknown scenario: " + name);
             }
+        }
+
+        private List<Phase> BuildTact6()
+        {
+            Pawn abort = Colonist("Abort");
+            ThingDef pistol = D("Gun_Autopistol");
+            Pawn closeHostile = null; // Raider() filters Downed — hold the instance ourselves
+
+            CompAmmoUser PistolComp() => Carried(abort, pistol).TryGetComp<CompAmmoUser>();
+
+            // Drafted pawn, empty sidearm, ammo on hand, cooldown long elapsed,
+            // hostile far outside CE's safe distance (12.9 default). Idempotent, so
+            // every phase stands alone against a fresh save.
+            void StageDraftedDry()
+            {
+                abort.drafter.Drafted = true;
+                CompAmmoUser pu = PistolComp();
+                pu.CurMagCount = 0;
+                AmmoDef ammo = pu.SelectedAmmo ?? pu.CurrentAmmo;
+                CompInventory inv = abort.TryGetComp<CompInventory>();
+                if (inv.AmmoCountOfDef(ammo) < 7)
+                {
+                    Thing stack = ThingMaker.MakeThing(ammo);
+                    stack.stackCount = 20;
+                    abort.inventory.innerContainer.TryAdd(stack, false);
+                    inv.UpdateInventory(); // cached availables lie after bare inserts
+                }
+                abort.mindState.lastAttackTargetTick = Find.TickManager.TicksGame - 60000;
+                ParkRaiderAt(abort, 60);
+            }
+
+            (bool, string) StagedState()
+            {
+                CompAmmoUser pu = PistolComp();
+                CompInventory inv = abort.TryGetComp<CompInventory>();
+                AmmoDef ammo = pu.SelectedAmmo ?? pu.CurrentAmmo;
+                bool ok = abort.Drafted && pu.CurMagCount == 0 && inv.AmmoCountOfDef(ammo) >= 7;
+                return (ok, $"drafted={abort.Drafted} mag={pu.CurMagCount} ammo={inv.AmmoCountOfDef(ammo)}");
+            }
+
+            return new List<Phase>
+            {
+                new Phase
+                {
+                    label = "default-off-sidearm-stays-empty",
+                    deadlineTicks = 4000,
+                    minTicks = 1800,
+                    arrange = () => StageDraftedDry(),
+                    checks =
+                    {
+                        P("staged-drafted-dry", StagedState),
+                        N("sidearm-stays-empty", () =>
+                        {
+                            int mag = PistolComp().CurMagCount;
+                            return (mag == 0, $"mag={mag} (feature OFF must be inert)");
+                        }),
+                        C("still-drafted-and-dry", () =>
+                            (abort.Drafted && PistolComp().CurMagCount == 0,
+                             $"drafted={abort.Drafted} mag={PistolComp().CurMagCount}")),
+                    }
+                },
+                new Phase
+                {
+                    label = "lull-tops-off-the-sidearm",
+                    deadlineTicks = 8000,
+                    arrange = () => StageDraftedDry(),
+                    mutate = () => { TacticsMod.Settings.draftedSidearmReload = true; },
+                    checks =
+                    {
+                        P("staged-drafted-dry", StagedState),
+                        C("sidearm-magazine-full", () =>
+                        {
+                            CompAmmoUser pu = PistolComp();
+                            return (pu.CurMagCount == pu.MagSize,
+                                $"mag={pu.CurMagCount}/{pu.MagSize} job={abort.CurJobDef?.defName} drafted={abort.Drafted}");
+                        }),
+                        C("still-drafted", () => (abort.Drafted, $"drafted={abort.Drafted}")),
+                    }
+                },
+                new Phase
+                {
+                    label = "hostile-in-safe-distance-blocks",
+                    deadlineTicks = 4000,
+                    minTicks = 1800,
+                    // The close hostile is DOWNED on purpose: CE's safe-distance
+                    // predicate counts any non-invisible hostile pawn, downed
+                    // included, and this feature mirrors that predicate exactly —
+                    // while a downed raider cannot beat up the defenseless subject
+                    // for the length of the negative window.
+                    arrange = () =>
+                    {
+                        StageDraftedDry();
+                        TacticsMod.Settings.draftedSidearmReload = true;
+                        closeHostile = Raider() ?? SpawnThreat(abort.Map);
+                        ParkPawnNear(abort, closeHostile, 8);
+                        if (!closeHostile.Downed)
+                        {
+                            HealthUtility.DamageUntilDowned(closeHostile, allowBleedingWounds: false);
+                        }
+                    },
+                    checks =
+                    {
+                        P("staged-with-close-hostile", () =>
+                        {
+                            var (ok, detail) = StagedState();
+                            bool alive = closeHostile != null && !closeHostile.Dead && closeHostile.Spawned;
+                            float dist = alive ? closeHostile.Position.DistanceTo(abort.Position) : -1f;
+                            return (ok && alive && dist < 12f,
+                                $"{detail} raiderDist={dist:F0} downed={closeHostile?.Downed}");
+                        }),
+                        N("no-reload-under-threat", () =>
+                        {
+                            int mag = PistolComp().CurMagCount;
+                            bool reloading = abort.CurJobDef == CE_JobDefOf.ReloadWeapon;
+                            return (mag == 0 && !reloading, $"mag={mag} reloading={reloading}");
+                        }),
+                        C("still-dry-with-threat-near", () =>
+                            (PistolComp().CurMagCount == 0, $"mag={PistolComp().CurMagCount}")),
+                    }
+                },
+            };
         }
 
         private static Pawn SpawnMech(string kindDefName, Pawn anchor, int distance)
