@@ -16,6 +16,7 @@ namespace CESSCompatTactics
         public int tiebreakEpsilonPct = 10;
         public bool targetAwareAmmoScoring = true;
         public bool armorAwareMelee = true;
+        public bool draftedSidearmReload = true;
 
         public override void ExposeData()
         {
@@ -26,6 +27,7 @@ namespace CESSCompatTactics
             Scribe_Values.Look(ref tiebreakEpsilonPct, "tiebreakEpsilonPct", 10);
             Scribe_Values.Look(ref targetAwareAmmoScoring, "targetAwareAmmoScoring", true);
             Scribe_Values.Look(ref armorAwareMelee, "armorAwareMelee", true);
+            Scribe_Values.Look(ref draftedSidearmReload, "draftedSidearmReload", true);
         }
     }
 
@@ -59,6 +61,8 @@ namespace CESSCompatTactics
                 "When choosing which gun to draw against a target, weigh the CURRENTLY-LOADED ammo's effectiveness against that target (penetration vs armor, EMP vs mechs). Never switches or reloads ammo.");
             listing.CheckboxLabeled("Armor-aware melee choice", ref Settings.armorAwareMelee,
                 "When drawing a melee weapon against a target, pick by CE melee-tool effectiveness against that target's armor (blunt vs armored, fast blades vs flesh).");
+            listing.CheckboxLabeled("Drafted sidearm top-off", ref Settings.draftedSidearmReload,
+                "Extends Combat Extended's drafted lull-reload from the equipped weapon to carried sidearms: during a combat lull (CE's own cooldown and safe-distance rules) a drafted pawn also refills empty sidearm magazines. Obeys CE's opportunistic-reload mode and per-weapon settings.");
             listing.End();
         }
     }
