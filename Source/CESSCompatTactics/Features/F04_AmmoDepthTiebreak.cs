@@ -86,6 +86,13 @@ namespace CESSCompatTactics.Features
             }
 
             (ThingWithComps weapon, float adjDps) best = scored.MaxBy(s => s.adjDps);
+            if (best.adjDps <= 0f)
+            {
+                // Every candidate is hopeless against this target (or scores zero
+                // outright) — re-ranking zeros is noise. SS's own pick stands as the
+                // least-bad generic choice.
+                return;
+            }
 
             if (tiebreak)
             {

@@ -9,15 +9,16 @@ using SSCore = PeteTimesSix.SimpleSidearms.SimpleSidearms;
 namespace CESSCompatTactics.Features
 {
     /// <summary>
-    /// Feature 6: armor-aware melee choice. SS's melee scoring averages
-    /// damage/penetration; under CE's armor model the right pick is
-    /// target-dependent (blunt mace vs an armored target, fast blade vs flesh).
-    /// Postfix on SS's own findBestMeleeWeapon — which already carries the target —
-    /// re-ranking candidates by their best CE melee tool's effectiveness against
-    /// THAT target (TargetScoring.MeleeScore). Target comes from SS's caller (the
-    /// CQC attacker / selection context) per the brief's provenance rules; no
-    /// melee target choice is invented here. Extends the same path core P06
-    /// feeds; no fork. Inert when the toggle is off or no target flows in.
+    /// Feature 6: armor-aware melee choice. SS's melee ranking (with the core
+    /// patch's P12 penetration input) is target-blind by design — P12's header
+    /// hands the target axis to this module. Postfix on SS's own
+    /// findBestMeleeWeapon — which already carries the target — re-ranking
+    /// candidates by SS's OWN biased score times the fraction of their damage
+    /// that survives THIS target's armor (TargetScoring.MeleeTargetFactor,
+    /// CE's TryPenetrateArmor in expectation form). SS keeps the ranking and
+    /// the speed bias; the factor only adds the matchup. Target comes from
+    /// SS's caller per the brief's provenance rules; no melee target choice is
+    /// invented here. Inert when the toggle is off or no target flows in.
     /// </summary>
     [HarmonyPatch(typeof(GettersFilters), nameof(GettersFilters.findBestMeleeWeapon),
                   new[] { typeof(Pawn), typeof(ThingWithComps), typeof(bool), typeof(bool), typeof(Pawn) },
@@ -61,8 +62,16 @@ namespace CESSCompatTactics.Features
                 {
                     continue;
                 }
-                float fallback = StatCalculator.getMeleeDPSBiased(candidate, pawn, bias, 0f);
-                float score = TargetScoring.MeleeScore(candidate, target, fallback);
+                // SS's biased score factors as (dmg/biasedSpeed) × (1 + penetration):
+                // the (1 + pen) term is a GENERIC armor bonus, paid against every
+                // target. Divide it out and substitute the actual through-armor
+                // fraction for THIS target — against flesh that leaves pure CE
+                // damage-per-second (a fast blade beats a slow mace), against armor
+                // the fraction takes over. MeleePenetration is the same P12-backed
+                // input SS itself used, so the division is exact, not a guess.
+                float score = StatCalculator.getMeleeDPSBiased(candidate, pawn, bias, 0f)
+                              / (1f + StatCalculator.MeleePenetration(candidate, pawn))
+                              * TargetScoring.MeleeTargetFactor(candidate, target);
                 if (score > bestScore)
                 {
                     bestScore = score;
