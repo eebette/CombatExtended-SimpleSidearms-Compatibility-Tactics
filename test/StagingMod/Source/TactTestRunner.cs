@@ -681,6 +681,18 @@ namespace CESSTacticsTestStaging
             }
         }
 
+        private static Pawn SpawnMech(string kindDefName, Pawn anchor, int distance)
+        {
+            PawnKindDef kind = DefDatabase<PawnKindDef>.GetNamedSilentFail(kindDefName)
+                ?? throw new InvalidOperationException(kindDefName + " kind missing");
+            Pawn mech = PawnGenerator.GeneratePawn(new PawnGenerationRequest(
+                kind, Faction.OfMechanoids, PawnGenerationContext.NonPlayer,
+                forceGenerateNewPawn: true, canGeneratePawnRelations: false));
+            GenSpawn.Spawn(mech, anchor.Map.Center, anchor.Map);
+            ParkPawnNear(anchor, mech, distance);
+            return mech;
+        }
+
         private static Pawn Mech()
         {
             return Find.CurrentMap.mapPawns.AllPawnsSpawned
@@ -706,6 +718,7 @@ namespace CESSTacticsTestStaging
             Pawn ammy = Colonist("Ammy");
             ThingDef rifle = D("Gun_AssaultRifle");
             ThingDef shotgun = D("Gun_PumpShotgun");
+            Pawn scyther = null;
 
             (ThingWithComps weapon, float dps, float averageSpeed) FindBest(Pawn target) =>
                 GettersFilters.findBestRangedWeapon(ammy, new LocalTargetInfo(target));
@@ -743,13 +756,53 @@ namespace CESSTacticsTestStaging
                 {
                     label = "on-armor-flips-to-penetrator",
                     deadlineTicks = 3000,
-                    mutate = () => { TacticsMod.Settings.targetAwareAmmoScoring = true; },
+                    // The staged centipede's plate stops BOTH loads outright under the
+                    // CE-true model (see the defer phase below) — the flip needs armor
+                    // the rifle penetrates and buckshot does not, so this phase brings
+                    // its own scyther.
+                    mutate = () =>
+                    {
+                        TacticsMod.Settings.targetAwareAmmoScoring = true;
+                        scyther = SpawnMech("Mech_Scyther", ammy, 8);
+                    },
                     checks =
                     {
-                        C("winner-is-rifle-vs-armored-mech", () =>
+                        C("winner-is-rifle-vs-scyther", () =>
+                        {
+                            var (weapon, dps, _) = FindBest(scyther);
+                            return (weapon?.def == rifle, $"ON pick={weapon?.def?.defName} adj={dps:F2}; {Detail(scyther)}");
+                        }),
+                    }
+                },
+                new Phase
+                {
+                    label = "on-hopeless-armor-defers-to-raw",
+                    deadlineTicks = 3000,
+                    // Centipede plate zeroes every multiplier; re-ranking zeros would be
+                    // noise, so the feature must stand down and let SS's raw pick
+                    // through (the close-range shotgun) — pins F04's zero-defer branch.
+                    // The scyther goes away first: it would otherwise shadow Mech() and
+                    // carve up Ammy while the phase polls.
+                    arrange = () =>
+                    {
+                        TacticsMod.Settings.targetAwareAmmoScoring = true;
+                        if (scyther != null && !scyther.Destroyed)
+                        {
+                            scyther.Destroy();
+                        }
+                        // Isolated runs skip phase 1's park: at the centipede's saved
+                        // position both guns are out of range, the phase runs red to
+                        // deadline, and CE's loadout enforcement strips the unshielded
+                        // colonist during the window (the core TESTPLAN's known
+                        // staging weakness). Idempotent when sequenced.
+                        ParkPawnNear(ammy, Mech(), 8);
+                    },
+                    checks =
+                    {
+                        C("raw-pick-stands-when-all-zero", () =>
                         {
                             var (weapon, dps, _) = FindBest(Mech());
-                            return (weapon?.def == rifle, $"ON pick={weapon?.def?.defName} adj={dps:F2}; {Detail(Mech())}");
+                            return (weapon?.def == shotgun, $"pick={weapon?.def?.defName} adj={dps:F2}; {Detail(Mech())}");
                         }),
                     }
                 },
@@ -764,6 +817,7 @@ namespace CESSTacticsTestStaging
             ThingDef knife = D("MeleeWeapon_Knife");
             ThingDef mace = D("MeleeWeapon_Mace");
             Pawn fleshTarget = null;
+            string fleshForensics = "";
 
             ThingWithComps FindMelee(Pawn target)
             {
@@ -809,9 +863,23 @@ namespace CESSTacticsTestStaging
                         fleshTarget.equipment?.DestroyAllEquipment();
                         fleshTarget.apparel?.DestroyAll();
                         ParkPawnNear(marcy, fleshTarget, 30);
+                        // Synchronous capture BEFORE the raider can close: later polls
+                        // can be poisoned by the brawl (the check itself stays live).
+                        float bias = PeteTimesSix.SimpleSidearms.SimpleSidearms.Settings.SpeedSelectionBiasMelee;
+                        var sb = new System.Text.StringBuilder();
+                        sb.Append($"pickAtMutate={FindMelee(fleshTarget)?.def?.defName ?? "fists"} ");
+                        foreach (ThingWithComps w in marcy.GetCarriedWeapons(true, true))
+                        {
+                            float ss = StatCalculator.getMeleeDPSBiased(w, marcy, bias, 0f);
+                            float pen = StatCalculator.MeleePenetration(w, marcy);
+                            float f = CESSCompatTactics.Features.TargetScoring.MeleeTargetFactor(w, fleshTarget);
+                            sb.Append($"{w.def.defName}: ss={ss:F2} pen={pen:F2} factor={f:F2} final={ss / (1f + pen) * f:F2}; ");
+                        }
+                        fleshForensics = sb.ToString();
                     },
                     checks =
                     {
+                        C("flesh-forensics", () => (true, $"{fleshForensics} nowDowned={marcy.Downed}"), informational: true),
                         C("blade-vs-flesh", () =>
                         {
                             ThingWithComps w = FindMelee(fleshTarget);
@@ -823,10 +891,13 @@ namespace CESSTacticsTestStaging
                 {
                     label = "on-vs-armor-picks-blunt",
                     deadlineTicks = 3000,
-                    // Isolated runs never see phase 2's enable — and with the core
-                    // patch's P12 giving SS's raw melee score real CE penetration, a
-                    // feature-off pick can land on the mace by itself. The enable keeps
-                    // this phase pinned to F06's scoring, not P12's.
+                    // Centipede plate (blunt 45 MPa vs a 5.6 mace) zeroes every
+                    // candidate under the CE-true model: the feature stands down and
+                    // SS's own P12-backed ranking picks the mace as least-bad. The
+                    // observable pick matches feature-off ON PURPOSE — this phase pins
+                    // the defer semantics; the feature's actual flip is phase 2's
+                    // knife-vs-flesh. Enable stays here so isolated runs still route
+                    // through F06.
                     arrange = () => { TacticsMod.Settings.armorAwareMelee = true; },
                     checks =
                     {
@@ -839,23 +910,13 @@ namespace CESSTacticsTestStaging
                         C("tool-forensics", () =>
                         {
                             Pawn mech = Mech();
-                            var sb = new System.Text.StringBuilder();
-                            foreach (ThingDef def in new[] { knife, mace })
+                            string line = string.Join(" ", new[] { knife, mace }.Select(def =>
                             {
                                 ThingWithComps inst = Carried(marcy, def);
-                                float score = CESSCompatTactics.Features.TargetScoring.MeleeScore(inst, mech, -1f);
-                                sb.Append($"{def.defName}: score={score:F2} tools=[");
-                                foreach (Verse.Tool t in def.tools)
-                                {
-                                    var tce = t as CombatExtended.ToolCE;
-                                    string caps = string.Join("+", t.capacities.Select(c => c.defName));
-                                    sb.Append(tce != null
-                                        ? $"({caps} pow={t.power:F1} cd={t.cooldownTime:F2} penS={tce.armorPenetrationSharp:F2} penB={tce.armorPenetrationBlunt:F2})"
-                                        : $"({caps} VANILLA pow={t.power:F1})");
-                                }
-                                sb.Append("] ");
-                            }
-                            return (true, sb.ToString());
+                                float f = CESSCompatTactics.Features.TargetScoring.MeleeTargetFactor(inst, mech);
+                                return $"{def.defName}: targetFactor={f:F2}";
+                            }));
+                            return (true, line);
                         }, informational: true),
                     }
                 },

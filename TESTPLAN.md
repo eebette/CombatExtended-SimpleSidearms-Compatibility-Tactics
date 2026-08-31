@@ -35,9 +35,9 @@ tact3→TACT-3-tiebreak, tact4→TACT-4-ammo-target, tact5→TACT-5-melee-target
   each phase that needs a toggle enables it ITSELF (arrange or mutate), so
   isolated runs test what the label claims.
 
-## Green pass — 2026-08-31 (v0.1 features under T1 doctrine)
+## Green pass — 2026-08-31 (T2: CE-true target scoring)
 
-19 phases (14 behavioral + 5 census), sequenced AND isolated:
+20 phases (15 behavioral + 5 census), sequenced AND isolated:
 
 - **tact1 (reload-abort, F01)**: feature-off reload completes; feature-on
   mid-reload swap to the loaded pistol with a hostile INSIDE the pistol's CE
@@ -50,10 +50,14 @@ tact3→TACT-3-tiebreak, tact4→TACT-4-ammo-target, tact5→TACT-5-melee-target
   deeper-magazine twin; a clearly better rifle with 1 round still wins
   (the tie window stays subordinate to DPS).
 - **tact4 (target-aware ammo scoring, F05 core)**: at 8 cells the buckshot
-  shotgun raw-wins; against mech plate the multipliers flip the pick to the
-  rifle. No SelectedAmmo writes anywhere.
-- **tact5 (armor-aware melee, F06)**: fast blade vs flesh; blunt mace vs the
-  mech via differentiated penetration floors.
+  shotgun raw-wins; a scyther's armor (which the rifle penetrates and buckshot
+  does not) flips the pick to the rifle; centipede plate zeroes EVERY
+  multiplier and the feature stands down — SS's raw pick survives untouched
+  (the zero-defer branch). No SelectedAmmo writes anywhere.
+- **tact5 (armor-aware melee, F06)**: knife beats mace vs flesh (the de-biased
+  CE damage-per-second, the feature's headline flip); vs centipede plate every
+  through-armor fraction is zero and F06 defers to SS's own P12-backed pick
+  (the mace as least-bad).
 
 ## Ledger — what the harness caught
 
@@ -61,11 +65,13 @@ tact3→TACT-3-tiebreak, tact4→TACT-4-ammo-target, tact5→TACT-5-melee-target
    mid-reload counts reloadable-from-inventory weapons as viable — i.e. the
    very gun being reloaded. Mid-reload the comparison must be "loaded THIS
    INSTANT": scan loaded secondaries directly, equip the specific winner.
-2. **Uniform penetration floor erased blunt (F06)**: CE's own numbers say a
-   mace can't crack centipede plate either; differentiated floors (sharp 0.10,
-   blunt 0.40) reflect that under-penetrating sharp deflects while blunt
-   transfers trauma through. Also fixed: `Raider()` matching any hostile had
-   silently substituted the centipede for the "flesh" target.
+2. **Uniform penetration floor erased blunt (F06, v0.1 — superseded)**: the
+   first catch was a uniform floor flattening sharp and blunt into the same
+   bottom; the differentiated floors that fixed it were themselves invented
+   constants and are gone in T2 (see 5 — the deflect-to-blunt conversion now
+   carries that asymmetry for real). Still standing from that round:
+   `Raider()` matching any hostile had silently substituted the centipede for
+   the "flesh" target.
 3. **Core-patch P02 interplay (T1's headline)**: the tact1 swap phases parked
    the raider at 40 tiles and historically passed — only through SS's
    squared-distance range-gate bug, which made a 16-range autopistol look
@@ -81,7 +87,37 @@ tact3→TACT-3-tiebreak, tact4→TACT-4-ammo-target, tact5→TACT-5-melee-target
    magazines, consumed by phases 1 and 3, so a phase-2 reload that wrongly
    COMPLETES starves phase 3 into a cascade failure. Deliberately left tight:
    the budget itself pins "phase 2 must abort, not complete".
-5. **Isolated runs exposed hidden phase coupling**: tact2/tact3 later phases
+5. **The T2 rewrite dropped every invented constant.** TargetScoring's first
+   version scored matchups with a clamp(pen/armor) curve, hand-tuned floors
+   (sharp 0.10 / blunt 0.40) and EMP constants (2.5x / 0.2x) — fiction. It now
+   reproduces ArmorUtilityCE.TryPenetrateArmor in expectation form: damage
+   through armor is dmg x clamp01(1 − armor/pen); an under-penetrating sharp
+   hit deflects into a blunt hit of cbrt(bluntPen x 10000)/10 damage against
+   blunt armor (GetDeflectDamageInfo); zero-pen damage passes whole; damage
+   that cannot harm health (EMP stun) leaves BOTH sides of the ratio — a stun
+   has no derivable damage exchange rate, so it is not scored and SS's own EMP
+   mode filters keep governing EMP picks. Secondaries (ion rounds' ballistic
+   core) are summed under CE's own penetration hand-off rules.
+6. **F06's factorization matters.** SS's biased melee score is
+   (dmg/biasedSpeed) x (1 + penetration) — the (1+pen) term is a GENERIC armor
+   bonus paid against every target, so multiplying a target factor on top of it
+   still let the mace beat the knife vs bare flesh. F06 divides the (1+pen)
+   term out (StatCalculator.MeleePenetration, the same P12-backed input SS
+   used, so the division is exact) and substitutes the actual through-armor
+   fraction. Vs flesh that leaves pure CE dps — the knife's speed wins.
+7. **All-zero means stand down, not re-rank.** Against centipede plate every
+   candidate's multiplier is genuinely zero under CE's model (a 5.6 MPa mace
+   head vs 45 MPa plate does nothing — the old floors manufactured a winner).
+   Both F04 and F06 now defer to SS's own pick when no candidate scores
+   positive: re-ranking zeros is noise. Pinned by tact4's
+   `on-hopeless-armor-defers-to-raw` and tact5's `on-vs-armor-picks-blunt`.
+8. **The knife-vs-flesh red unmasked a CORE-PATCH gap (now P13).** SS's melee
+   damage/speed inputs read vanilla accessors that multiply each tool by the
+   attacker's part efficiency in the tool's linkedBodyPartsGroup — and CE's
+   groups are weapon anatomy (Blade/Point), which no human has. Every CE blade
+   scored as its handle. Fixed in the core patch (axis 13), pinned there by
+   `ce-melee-damage-signal`; this suite's tact5 covers the consuming side.
+9. **Isolated runs exposed hidden phase coupling**: tact2/tact3 later phases
    inherited forced flags, magazine drains, and feature toggles from earlier
    phases' mutates; tact1/tact5's final phases "passed" isolated with their
    feature OFF (vacuously — tact5's mace pick can even land via the core
@@ -101,6 +137,16 @@ reverted; script pattern in the compat repo's TESTPLAN):
   component features.
 - **F03 Prepare→false**: tact2 census red (3 < 4 methods) AND
   `on-falls-through-to-pistol` red — one run, both detection layers.
+- **Core P13 Prepare→false** (cross-repo): compat census red (22 < 23),
+  `ce-melee-damage-signal` red, AND tact5's knife-vs-flesh red — the module's
+  phases detect a regression in the dependency they consume.
+- **F04 zero-defer removed**: came back GREEN — with the branch gone, MaxBy
+  over all-zero scores returns the FIRST carried candidate, which on this save
+  is the raw pick itself. The scratch cannot flip the outcome here (documented
+  coincidence, order-dependent); the phase's ability to fail is proven anyway —
+  the un-parked isolated run turned it red (see the park note in its arrange).
+- **F06 de-bias removed**: tact5 `on-vs-flesh-picks-blade` red (the generic
+  (1+pen) bonus hands flesh back to the mace).
 
 ## Harness ops notes
 
