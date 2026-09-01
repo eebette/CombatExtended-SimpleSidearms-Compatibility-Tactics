@@ -38,12 +38,10 @@ tact3→TACT-3-tiebreak, tact4→TACT-4-ammo-target, tact5→TACT-5-melee-target
 
 ## Green pass — 2026-09-01 (T3: adversarial round fixed and pinned)
 
-32 phases (26 behavioral + 6 census). Sequenced: all green. Isolated: tact2
-(7/7) and tact3 (4/4) re-certified post-convergence; tact1/4/5/6 sweeps are
-QUEUED — the machine's Vulkan driver wedged system-wide mid-validation
-(vkCreateDevice ERROR_INITIALIZATION_FAILED for every process; needs a driver
-reload/reboot) after the full sequenced board and every A/B leg had already
-run green. Run the four sweeps before the next release cut. The T3
+32 phases (26 behavioral + 6 census), sequenced AND isolated — full board
+green 2026-09-01 (the final sweeps survived a Vulkan driver wedge, a reboot,
+a crash-guard modlist wipe from racing Steam's startup, and one
+self-inflicted double-instance collision; ops notes below). The T3
 adversarial round (three independent reviewers over the full source +
 decompiles) found the headline target-aware features DEAD OR SUPPRESSED in
 real play behind a green suite — every fix below is pinned by a phase driven
@@ -208,6 +206,14 @@ not a direct API call:
      prefix failed to install — upstream drift can no longer turn the
      "hypothetical" preference question into real equips. **T3-10**: F01
      serves every loaded map, not just the watched one.
+   - Iso-vs-sequenced weapon state: the hopeless-warmup phase equips the
+     RIFLE unconditionally — isolated runs load with the save's shotgun in
+     hand, whose ~16 range never reaches the 45-cell target (the pawn stood
+     Mobile forever); sequenced only worked because the warmup phase had
+     already swapped. DamageUntilDowned often CANNOT down a mech (ends alive
+     at ~8% hp) — distance outside the blaster's reach is the real shield.
+     ParkWithLOS walks a 16-bearing ring because ParkPawnNear places due
+     EAST only, and a whole east line can be LOS-blocked from some anchors.
    - Staging lessons the round forced: CQC phases drive the swing THROUGH
      THE REAL VERB (raider.meleeVerbs.TryMeleeAttack each poll — a free
      raider re-targets other colonists, and even a forced attack job loses
