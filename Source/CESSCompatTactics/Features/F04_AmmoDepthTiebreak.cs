@@ -41,7 +41,10 @@ namespace CESSCompatTactics.Features
     internal static class RangedSelectionScope
     {
         internal static Pawn Target;
-        internal static List<(ThingWithComps weapon, float raw, float adjusted)> Records;
+        // modeled=false: the multiplier could not judge this weapon (no CE
+        // projectile) — its score is untouched and it sits OUT of all-hopeless
+        // reasoning (convergence C5).
+        internal static List<(ThingWithComps weapon, float raw, float adjusted, bool modeled)> Records;
 
         internal static bool Active => Records != null;
     }
@@ -56,7 +59,7 @@ namespace CESSCompatTactics.Features
 
         [HarmonyPrefix]
         public static void Prefix(LocalTargetInfo? target,
-            out (Pawn prevTarget, List<(ThingWithComps weapon, float raw, float adjusted)> prevRecords)? __state)
+            out (Pawn prevTarget, List<(ThingWithComps weapon, float raw, float adjusted, bool modeled)> prevRecords)? __state)
         {
             __state = null;
             try
@@ -70,7 +73,7 @@ namespace CESSCompatTactics.Features
                 }
                 __state = (RangedSelectionScope.Target, RangedSelectionScope.Records);
                 RangedSelectionScope.Target = targetAware ? targetPawn : null;
-                RangedSelectionScope.Records = new List<(ThingWithComps, float, float)>();
+                RangedSelectionScope.Records = new List<(ThingWithComps, float, float, bool)>();
             }
             catch (Exception e)
             {
@@ -96,7 +99,7 @@ namespace CESSCompatTactics.Features
         /// <summary>Scope must not leak past the call even when SS throws.</summary>
         [HarmonyFinalizer]
         public static void Finalizer(
-            (Pawn prevTarget, List<(ThingWithComps weapon, float raw, float adjusted)> prevRecords)? __state)
+            (Pawn prevTarget, List<(ThingWithComps weapon, float raw, float adjusted, bool modeled)> prevRecords)? __state)
         {
             if (__state.HasValue)
             {
@@ -119,11 +122,14 @@ namespace CESSCompatTactics.Features
             }
             TacticsSettings settings = TacticsMod.Settings;
 
-            // All-hopeless defer: every adjusted score zeroed against this target.
+            // All-hopeless defer: every MODELED score zeroed against this target
+            // (unmodelable weapons neither trigger nor block it — convergence C5).
             // The recorded raw ranking IS SS's target-blind pick — restore it.
             bool deferred = false;
             if (RangedSelectionScope.Target != null
-                && records.All(r => r.adjusted <= 0f) && records.Any(r => r.raw > 0f))
+                && records.Any(r => r.modeled)
+                && records.Where(r => r.modeled).All(r => r.adjusted <= 0f)
+                && records.Any(r => r.raw > 0f))
             {
                 // Only guns that can actually fire: records include dry weapons at
                 // full paper score, and the compat patch's dry-pick correction (P03)
@@ -133,7 +139,11 @@ namespace CESSCompatTactics.Features
                 if (usable.Count > 0)
                 {
                     var bestRaw = usable.MaxBy(r => r.raw);
-                    __result = (bestRaw.weapon, bestRaw.raw, __result.averageSpeed);
+                    // The ADJUSTED score (zero), not the raw one: trySwap compares
+                    // this against an in-scope incumbent also scored ~0 — a raw
+                    // score here re-rigged that comparison and livelocked the
+                    // warmup (phantom swap, job reset, never fires — convergence C1).
+                    __result = (bestRaw.weapon, bestRaw.adjusted, __result.averageSpeed);
                     deferred = true;
                 }
             }
@@ -143,7 +153,7 @@ namespace CESSCompatTactics.Features
                 return;
             }
             // Tie window over the scores this selection actually ranked by.
-            Func<(ThingWithComps weapon, float raw, float adjusted), float> score =
+            Func<(ThingWithComps weapon, float raw, float adjusted, bool modeled), float> score =
                 r => deferred ? r.raw : r.adjusted;
             ThingWithComps picked = __result.weapon;
             var current = records.FirstOrDefault(r => r.weapon == picked);
@@ -181,7 +191,10 @@ namespace CESSCompatTactics.Features
         }
 
         /// <summary>Rounds on hand: magazine + carried spares; non-CE weapons never
-        /// run dry — effectively infinite depth.</summary>
+        /// run dry — effectively infinite depth. CurAmmoSet, not Props.ammoSet
+        /// (variable-ammo guns override the set — the dependency's own documented
+        /// rule), counted through CE's own AmmoCountOfDef accessor rather than raw
+        /// container arithmetic (convergence C4).</summary>
         private static long AmmoDepth(ThingWithComps weapon)
         {
             CompAmmoUser user = weapon.TryGetComp<CompAmmoUser>();
@@ -191,13 +204,12 @@ namespace CESSCompatTactics.Features
             }
             Pawn holder = (weapon.ParentHolder as Pawn_InventoryTracker)?.pawn
                           ?? (weapon.ParentHolder as Pawn_EquipmentTracker)?.pawn;
-            var ammoDefs = user.Props?.ammoSet?.ammoTypes?.Select(l => (ThingDef)l.ammo).ToList();
+            CompInventory inventory = holder?.TryGetComp<CompInventory>();
             long spare = 0;
-            if (ammoDefs != null && holder?.inventory?.innerContainer != null)
+            var ammoTypes = user.CurAmmoSet?.ammoTypes;
+            if (inventory != null && ammoTypes != null)
             {
-                spare = holder.inventory.innerContainer
-                    .Where(t => ammoDefs.Contains(t.def))
-                    .Sum(t => (long)t.stackCount);
+                spare = ammoTypes.Sum(l => (long)inventory.AmmoCountOfDef(l.ammo));
             }
             return user.CurMagCount + spare;
         }
@@ -223,7 +235,7 @@ namespace CESSCompatTactics.Features
 
         [HarmonyPrefix]
         public static void Prefix(LocalTargetInfo target,
-            out (Pawn prevTarget, List<(ThingWithComps weapon, float raw, float adjusted)> prevRecords)? __state)
+            out (Pawn prevTarget, List<(ThingWithComps weapon, float raw, float adjusted, bool modeled)> prevRecords)? __state)
         {
             __state = null;
             try
@@ -235,7 +247,7 @@ namespace CESSCompatTactics.Features
                 }
                 __state = (RangedSelectionScope.Target, RangedSelectionScope.Records);
                 RangedSelectionScope.Target = targetPawn;
-                RangedSelectionScope.Records = new List<(ThingWithComps, float, float)>();
+                RangedSelectionScope.Records = new List<(ThingWithComps, float, float, bool)>();
             }
             catch (Exception e)
             {
@@ -246,7 +258,7 @@ namespace CESSCompatTactics.Features
 
         [HarmonyFinalizer]
         public static void Finalizer(
-            (Pawn prevTarget, List<(ThingWithComps weapon, float raw, float adjusted)> prevRecords)? __state)
+            (Pawn prevTarget, List<(ThingWithComps weapon, float raw, float adjusted, bool modeled)> prevRecords)? __state)
         {
             if (__state.HasValue)
             {
@@ -313,11 +325,16 @@ namespace CESSCompatTactics.Features
             }
             float raw = __result;
             float adjusted = raw;
-            if (RangedSelectionScope.Target != null && raw > 0f)
+            bool modeled = false;
+            if (RangedSelectionScope.Target != null && raw > 0f
+                && TargetScoring.TryRangedMultiplier(weapon, RangedSelectionScope.Target, out float factor))
             {
-                adjusted = raw * TargetScoring.RangedMultiplier(weapon, RangedSelectionScope.Target);
+                adjusted = raw * factor;
+                modeled = true;
             }
-            RangedSelectionScope.Records.Add((weapon, raw, adjusted));
+            // An unmodelable weapon (no CE projectile) keeps its untouched score —
+            // the same mixing SS does with the feature off (convergence C5).
+            RangedSelectionScope.Records.Add((weapon, raw, adjusted, modeled));
             __result = adjusted;
         }
     }

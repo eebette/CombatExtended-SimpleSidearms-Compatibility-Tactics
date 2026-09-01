@@ -42,7 +42,7 @@ namespace CESSCompatTactics.Features
     internal static class MeleeSelectionScope
     {
         internal static Verse.Pawn Target;
-        internal static Dictionary<ThingWithComps, (float raw, float adjusted)> Records;
+        internal static Dictionary<ThingWithComps, (float raw, float adjusted, bool modeled)> Records;
 
         internal static bool Active => Records != null;
     }
@@ -57,7 +57,7 @@ namespace CESSCompatTactics.Features
 
         [HarmonyPrefix]
         public static void Prefix(Pawn target,
-            out (Pawn prevTarget, Dictionary<ThingWithComps, (float, float)> prevRecords)? __state)
+            out (Pawn prevTarget, Dictionary<ThingWithComps, (float, float, bool)> prevRecords)? __state)
         {
             __state = null;
             try
@@ -68,7 +68,7 @@ namespace CESSCompatTactics.Features
                 }
                 __state = (MeleeSelectionScope.Target, MeleeSelectionScope.Records);
                 MeleeSelectionScope.Target = target;
-                MeleeSelectionScope.Records = new Dictionary<ThingWithComps, (float, float)>();
+                MeleeSelectionScope.Records = new Dictionary<ThingWithComps, (float, float, bool)>();
             }
             catch (Exception e)
             {
@@ -79,7 +79,7 @@ namespace CESSCompatTactics.Features
 
         /// <summary>Scope must not leak past the call even when SS throws.</summary>
         [HarmonyFinalizer]
-        public static void Finalizer((Pawn prevTarget, Dictionary<ThingWithComps, (float, float)> prevRecords)? __state)
+        public static void Finalizer((Pawn prevTarget, Dictionary<ThingWithComps, (float, float, bool)> prevRecords)? __state)
         {
             if (__state.HasValue)
             {
@@ -120,16 +120,22 @@ namespace CESSCompatTactics.Features
             }
             float raw = __result;
             float adjusted = raw;
-            if (raw > 0f)
+            bool modeled = false;
+            if (raw > 0f
+                && TargetScoring.TryMeleeTargetFactor(weapon, MeleeSelectionScope.Target, out float factor))
             {
                 // SS's score factors as (dmg/biasedSpeed) × (1 + pen): the (1+pen)
                 // term is a GENERIC armor bonus paid against every target. Divide it
                 // out — MeleePenetration is the very input SS multiplied in, so this
                 // is exact — and substitute the actual through-armor fraction.
-                adjusted = raw / (1f + StatCalculator.MeleePenetration(weapon, pawn))
-                           * TargetScoring.MeleeTargetFactor(weapon, MeleeSelectionScope.Target);
+                // An unmodelable weapon (no CE tools) is left completely untouched:
+                // dividing it while handing back factor 1 made an unpatched mod
+                // weapon the automatic "armor answer" and suppressed the defer
+                // (convergence C5).
+                adjusted = raw / (1f + StatCalculator.MeleePenetration(weapon, pawn)) * factor;
+                modeled = true;
             }
-            MeleeSelectionScope.Records[weapon] = (raw, adjusted);
+            MeleeSelectionScope.Records[weapon] = (raw, adjusted, modeled);
             __result = adjusted;
         }
     }
@@ -169,9 +175,12 @@ namespace CESSCompatTactics.Features
             {
                 return;
             }
-            // All-hopeless defer: nothing the pawn carries does anything to this
-            // target — the recorded raw ranking IS SS's target-blind pick; restore it.
-            if (records.Values.All(r => r.adjusted <= 0f) && records.Values.Any(r => r.raw > 0f))
+            // All-hopeless defer: nothing MODELED does anything to this target
+            // (unmodelable weapons neither trigger nor block it — convergence C5) —
+            // the recorded raw ranking IS SS's target-blind pick; restore it.
+            if (records.Values.Any(r => r.modeled)
+                && records.Values.Where(r => r.modeled).All(r => r.adjusted <= 0f)
+                && records.Values.Any(r => r.raw > 0f))
             {
                 result = records.MaxBy(kv => kv.Value.raw).Key;
                 __result = true;

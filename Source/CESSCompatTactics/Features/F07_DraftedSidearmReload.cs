@@ -32,9 +32,18 @@ namespace CESSCompatTactics.Features
                   new[] { ArgumentType.Normal, ArgumentType.Out, ArgumentType.Out })]
     public static class JobGiver_CheckReload_DoReloadCheck_Patch
     {
-        public static bool Prepare() => PatchGuard.Require(typeof(JobGiver_CheckReload), "DoReloadCheck",
-            new[] { typeof(Pawn), typeof(ThingWithComps).MakeByRefType(), typeof(AmmoDef).MakeByRefType() },
-            "drafted pawns will not top off sidearm magazines during combat lulls.");
+        public static bool Prepare()
+        {
+            // The gates below re-read CE's drafted-path conditions (values live,
+            // SHAPES copied — F07 ruling: postfix + fingerprint). Any change to the
+            // upstream method turns from silent divergence into a loud re-verify.
+            UpstreamFingerprint.Verify(typeof(JobGiver_CheckReload), "DoReloadCheck",
+                UpstreamFingerprint.DoReloadCheckHash,
+                "the drafted-lull gate conditions F07 re-reads per sidearm");
+            return PatchGuard.Require(typeof(JobGiver_CheckReload), "DoReloadCheck",
+                new[] { typeof(Pawn), typeof(ThingWithComps).MakeByRefType(), typeof(AmmoDef).MakeByRefType() },
+                "drafted pawns will not top off sidearm magazines during combat lulls.");
+        }
 
         [HarmonyPostfix]
         public static void Postfix(Pawn pawn, ref ThingWithComps reloadWeapon, ref AmmoDef reloadAmmo,

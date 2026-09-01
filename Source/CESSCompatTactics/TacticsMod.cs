@@ -87,8 +87,13 @@ namespace CESSCompatTactics
                 }
                 try
                 {
-                    harmony.CreateClassProcessor(type).Patch();
-                    applied++;
+                    // Patch() returns the patched methods; a Prepare-false class
+                    // returns none and is SKIPPED, not applied (convergence note).
+                    var patched = harmony.CreateClassProcessor(type).Patch();
+                    if (patched != null && patched.Count > 0)
+                    {
+                        applied++;
+                    }
                 }
                 catch (System.Exception e)
                 {

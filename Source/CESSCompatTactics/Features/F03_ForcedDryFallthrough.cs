@@ -71,21 +71,49 @@ namespace CESSCompatTactics.Features
         // (see also ForcedWeaponLesson_Patch below)
         internal static bool IsTrulyDry(Pawn pawn, ThingDefStuffDefPair pair)
         {
-            ThingWithComps carried = pawn.GetCarriedWeapons(includeEquipped: true, includeTools: true)
-                .FirstOrDefault(w => w.toThingDefStuffDefPair() == pair);
-            if (carried == null)
+            // The forced flag is PAIR-level; dryness must be too. Judging the pair
+            // by whichever carried instance enumerates first let a drained twin
+            // shadow a loaded one (hiding a forced gun SS could have equipped) and
+            // let the refill-in-flight clause compare against the wrong copy
+            // (convergence C2). Aggregate over every carried instance.
+            var instances = pawn.GetCarriedWeapons(includeEquipped: true, includeTools: true)
+                .Where(w => w.toThingDefStuffDefPair() == pair)
+                .ToList();
+            if (instances.Count == 0)
             {
                 return false; // not carried — SS's own logic handles that case
             }
-            CompAmmoUser user = carried.TryGetComp<CompAmmoUser>();
-            if (user == null || !user.UseAmmo)
+            bool anyCeGun = false;
+            bool anyLoaded = false;
+            bool anyAmmo = false;
+            bool anyRefill = false;
+            foreach (ThingWithComps instance in instances)
             {
-                return false; // no CE ammo concept — can never be dry
+                CompAmmoUser user = instance.TryGetComp<CompAmmoUser>();
+                if (user == null || !user.UseAmmo)
+                {
+                    return false; // a no-ammo-concept copy exists — can never be dry
+                }
+                anyCeGun = true;
+                if (user.HasMagazine && user.CurMagCount > 0)
+                {
+                    anyLoaded = true;
+                }
+                if (user.HasAmmo)
+                {
+                    anyAmmo = true;
+                }
+                if (pawn.CurJobDef == CE_JobDefOf.ReloadWeapon
+                    && pawn.CurJob?.targetB.Thing == instance)
+                {
+                    anyRefill = true;
+                }
             }
-            bool magEmpty = !user.HasMagazine || user.CurMagCount <= 0;
-            bool refillInFlight = pawn.CurJobDef == CE_JobDefOf.ReloadWeapon
-                                  && pawn.CurJob?.targetB.Thing == carried;
-            return magEmpty && (!user.HasAmmo || refillInFlight);
+            if (!anyCeGun || anyLoaded)
+            {
+                return false; // a loaded copy exists — SS's forced branch can equip it
+            }
+            return !anyAmmo || anyRefill;
         }
 
         /// <summary>Shared hide step for both entry points: stash and null the
