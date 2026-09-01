@@ -38,7 +38,12 @@ tact3→TACT-3-tiebreak, tact4→TACT-4-ammo-target, tact5→TACT-5-melee-target
 
 ## Green pass — 2026-09-01 (T3: adversarial round fixed and pinned)
 
-30 phases (24 behavioral + 6 census), sequenced AND isolated. The T3
+32 phases (26 behavioral + 6 census). Sequenced: all green. Isolated: tact2
+(7/7) and tact3 (4/4) re-certified post-convergence; tact1/4/5/6 sweeps are
+QUEUED — the machine's Vulkan driver wedged system-wide mid-validation
+(vkCreateDevice ERROR_INITIALIZATION_FAILED for every process; needs a driver
+reload/reboot) after the full sequenced board and every A/B leg had already
+run green. Run the four sweeps before the next release cut. The T3
 adversarial round (three independent reviewers over the full source +
 decompiles) found the headline target-aware features DEAD OR SUPPRESSED in
 real play behind a green suite — every fix below is pinned by a phase driven
@@ -214,6 +219,70 @@ not a direct API call:
      the range window and turns an A-leg vacuous (re-park via poll); and
      the warmup phase stages in mutate behind world-is-ticking, because
      tick-0 arranges lie (core suite lesson, relearned).
+
+## Convergence round (2026-09-01, post-T3 adversarial re-pass, no diff bias)
+
+Two fresh attackers over the CURRENT state — one full-repo, one mechanical
+re-pass on the seams the T3 fixes introduced. Both independently found C1.
+
+- **C1 (Critical)**: the all-hopeless defer wrote the winner's RAW score into
+  the returned tuple, while trySwap's incumbent (in-scope) scored ~0 — a
+  raw-vs-zero comparison that "swapped" to the already-equipped gun every
+  warmup, reset the attack job, and froze the pawn mid-aim forever against
+  hopeless armor, flooding the log with SS's already-equipped warning. Fix:
+  the defer returns the ADJUSTED (zero) score — the preference path reads
+  only the weapon, and trySwap then stands down, which is the defer's own
+  philosophy applied to the swap decision. Pinned by
+  `warmup-vs-hopeless-armor-still-fires` (a REAL drafted attack on a downed
+  centipede; the A-leg goes red through the diagnostics machinery alone —
+  the warning flood is on no allowlist).
+- **C2**: pair-level dryness judged by the first carried instance — a drained
+  twin spoke for a loaded one (hiding a forced gun SS could equip) and the
+  refill-in-flight clause compared the wrong copy. Fix: aggregate over every
+  carried instance. Pinned by `a-loaded-twin-keeps-the-forced-branch-alive`
+  (which twin SS then draws is its own MarketValue tie — the pin is that the
+  pair is not hidden).
+- **C3 (owner ruling: no mirrored filters)**: F01's winner scan was still a
+  hand-copied filter chain (missing VFE-shield and Tacticowl exclusions —
+  the drift disease half-cured). Fix: DELETE the enumeration; the winner now
+  comes from SS's own findBestRangedWeapon with a call-scoped
+  loaded-this-instant filter on GetCarriedWeapons (P03's own pattern) — SS's
+  full chain and F04's target-aware scoring inherited, census 11. Pinned by
+  a staged DRY-with-spares decoy rifle the scope must hide (A-leg equips the
+  empty decoy).
+- **C4**: AmmoDepth read Props.ammoSet and raw container sums — now
+  CurAmmoSet through CE's own AmmoCountOfDef (the dependency's documented
+  rule for variable-ammo guns).
+- **C5 (owner ruling: pass-through)**: an unmodelable weapon (no CE
+  projectile/tools) was divided by the generic (1+pen) bonus while handed
+  factor 1 — an unpatched mod weapon became the automatic "armor answer" and
+  suppressed the defer. Fix: Try-variants report modeled=false; unmodelable
+  weapons pass through COMPLETELY untouched and sit out of all-hopeless
+  reasoning — the same mixing SS does with the features off. Pinned by a
+  vanilla-tools staging weapon (CESSTest_VanillaClub, staging-mod def)
+  riding the hopeless-armor phase.
+- **TargetScoring rework (owner rulings: A + C)**: the per-hit arithmetic is
+  now CE'S OWN CODE — the real private TryPenetrateArmor invoked with
+  armor:null (every side effect sits behind its `armor != null` block; the
+  null path is pure) via a cached delegate, with the T2 model retained as a
+  loud named FALLBACK. The deflect-to-blunt conversion (one cbrt line) and
+  the composition order stay modeled-with-citation. IL FINGERPRINTS
+  (FNV-1a over opcode+operand of the upstream body, checked at load) guard
+  TryPenetrateArmor, GetDeflectDamageInfo, and F07's DoReloadCheck: any
+  upstream reshape turns silent drift into a loud re-verify error — and the
+  census phase's startup sweep turns that error into a red suite.
+- Also: Bootstrap counts Prepare-false classes as skipped, not applied; F01
+  reads live verb range (attachments/verb swaps) with a def fallback; the
+  component guards a null Settings.
+- Staging lessons: weapon defs are mostly NOT stuffable — MakeThing with a
+  stuff throws (revolvers, the test club); the armor phase's vanilla club
+  raw-beats the knife vs flesh even in stock SS, so the swing phase destroys
+  it; downing an armed mech races its in-flight burst and can kill it
+  outright — park armed mechs OUT OF RANGE instead, and stage the downed
+  one with a respawn retry; a 45-cell firing line can be LOS-blocked — the
+  hopeless phase steps its target closer until a shot happens; tact6's
+  raider must park outside the RIFLE's range or the drafted pawn's auto-fire
+  refreshes the reload cooldown forever.
 
 ## A/B — the T3 fix set (2026-09-01, every leg run and red)
 

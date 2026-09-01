@@ -254,16 +254,17 @@ namespace CESSTacticsTestStaging
                                 return info != null && info.Owners.Contains("eebette.CESimpleSidearmsCompat.Tactics");
                             })
                             .ToList();
-                        // 10 distinct methods today: equipBestWeaponFromInventoryByPreference
+                        // 11 distinct methods today: equipBestWeaponFromInventoryByPreference
                         // (forced-dry hide + melee scope), SetWeaponAsForced (lesson note),
                         // tryCQCWeaponSwapToMelee (forced-dry CQC coverage),
                         // findBestRangedWeapon (selection scope), RangedDPS + RangedDPSAverage
                         // (in-scope adjustment/recording), trySwapToMoreAccurateRangedWeapon
                         // (symmetric swap comparison), findBestMeleeWeapon (all-hopeless defer),
                         // getMeleeDPSBiased (in-scope melee adjustment),
-                        // JobGiver_CheckReload.DoReloadCheck (drafted sidearm top-off).
-                        return (mine.Count >= 10,
-                            $"methods patched by eebette.CESimpleSidearmsCompat.Tactics={mine.Count} (want >= 10): "
+                        // JobGiver_CheckReload.DoReloadCheck (drafted sidearm top-off),
+                        // Extensions.GetCarriedWeapons (reload-abort's loaded-now scope).
+                        return (mine.Count >= 11,
+                            $"methods patched by eebette.CESimpleSidearmsCompat.Tactics={mine.Count} (want >= 11): "
                             + string.Join(", ", mine.Select(m => m.DeclaringType?.Name + "." + m.Name).OrderBy(n => n)));
                     }),
                 }
@@ -716,7 +717,9 @@ namespace CESSTacticsTestStaging
                     inv.UpdateInventory(); // cached availables lie after bare inserts
                 }
                 abort.mindState.lastAttackTargetTick = Find.TickManager.TicksGame - 60000;
-                ParkRaiderAt(abort, 60);
+                // WELL outside the rifle's 55 range: a wandering raider inside it makes
+                // the drafted pawn auto-fire, refreshing the cooldown forever.
+                ParkRaiderAt(abort, 100);
             }
 
             (bool, string) StagedState()
@@ -755,6 +758,15 @@ namespace CESSTacticsTestStaging
                     deadlineTicks = 8000,
                     arrange = () => StageDraftedDry(),
                     mutate = () => { TacticsMod.Settings.draftedSidearmReload = true; },
+                    poll = () =>
+                    {
+                        Pawn r = Raider();
+                        if (r != null && !r.Downed && r.Position.DistanceTo(abort.Position) < 70f)
+                        {
+                            ParkRaiderAt(abort, 100);
+                            abort.mindState.lastAttackTargetTick = Find.TickManager.TicksGame - 60000;
+                        }
+                    },
                     checks =
                     {
                         P("staged-drafted-dry", StagedState),
@@ -858,6 +870,7 @@ namespace CESSTacticsTestStaging
             ThingDef shotgun = D("Gun_PumpShotgun");
             Pawn scyther = null;
             Pawn warmupScyther = null;
+            int hopelessAdjustTick = 0;
 
             (ThingWithComps weapon, float dps, float averageSpeed) FindBest(Pawn target) =>
                 GettersFilters.findBestRangedWeapon(ammy, new LocalTargetInfo(target));
@@ -1048,10 +1061,30 @@ namespace CESSTacticsTestStaging
                         {
                             ammy.TryGetComp<CompInventory>().TrySwitchToWeapon(sg);
                         }
+                        // The staged centipede sits ~8 cells out and RETURNS FIRE the
+                        // moment Ammy drafts and shoots — and downing it here races its
+                        // in-flight burst (and sometimes kills it outright). Park it out
+                        // of blaster range instead; the hopeless phase stages its own.
+                        Pawn centipede = Mech();
+                        if (centipede != null)
+                        {
+                            ParkPawnNear(ammy, centipede, 60);
+                        }
                         warmupScyther = SpawnMech("Mech_Scyther", ammy, 14);
                         ammy.drafter.Drafted = true;
                         Job job = JobMaker.MakeJob(JobDefOf.AttackStatic, warmupScyther);
                         ammy.jobs.StartJob(job, JobCondition.InterruptForced);
+                    },
+                    // The moment the swap lands the scyther has done its job — destroy
+                    // it before its charge reaches Ammy (it killed the subject between
+                    // phases and left the NEXT phase anchored on a dead pawn).
+                    poll = () =>
+                    {
+                        if (ammy.equipment?.Primary?.def == rifle
+                            && warmupScyther != null && !warmupScyther.Destroyed)
+                        {
+                            warmupScyther.Destroy();
+                        }
                     },
                     checks =
                     {
@@ -1059,14 +1092,160 @@ namespace CESSTacticsTestStaging
                             (Find.TickManager.TicksGame > 60, $"tick={Find.TickManager.TicksGame}")),
                         C("staging-forensics", () =>
                         {
-                            float dist = warmupScyther?.Position.DistanceTo(ammy.Position) ?? -1f;
+                            float dist = warmupScyther != null && !warmupScyther.Destroyed && warmupScyther.Spawned
+                                ? warmupScyther.Position.DistanceTo(ammy.Position) : -1f;
                             return (true, $"primary={ammy.equipment?.Primary?.def?.defName} dist={dist:F0} "
-                                + $"job={ammy.CurJobDef?.defName} scytherDead={warmupScyther?.Dead}");
+                                + $"job={ammy.CurJobDef?.defName}");
                         }, informational: true),
                         C("warmup-draws-the-rifle", () =>
                         {
                             ThingDef primary = ammy.equipment?.Primary?.def;
                             return (primary == rifle, $"primary={primary?.defName} job={ammy.CurJobDef?.defName}");
+                        }),
+                    }
+                },
+                new Phase
+                {
+                    label = "warmup-vs-hopeless-armor-still-fires",
+                    deadlineTicks = 9000,
+                    // Convergence C1: the all-hopeless defer used to hand trySwap a RAW
+                    // score against an in-scope incumbent adjusted to ~0 — a phantom
+                    // "swap" to the already-equipped gun every warmup, which reset the
+                    // attack job forever: the pawn aimed eternally and never fired,
+                    // flooding the log with SS's already-equipped warning. That warning
+                    // is not on any allowlist, so the diagnostics machinery alone turns
+                    // the A-leg red; the positive check pins the shot actually leaving
+                    // the barrel.
+                    arrange = () =>
+                    {
+                        TacticsMod.Settings.targetAwareAmmoScoring = true;
+                        PeteTimesSix.SimpleSidearms.SimpleSidearms.Settings.RangedCombatAutoSwitch = true;
+                        PeteTimesSix.SimpleSidearms.SimpleSidearms.Settings.RangedCombatAutoSwitchMaxWarmup = 0.9f;
+                    },
+                    mutate = () =>
+                    {
+                        string step = "recover-guns";
+                        try
+                        {
+                            // The centipede's last in-flight burst can DOWN Ammy right as
+                            // the previous phase latches — the rifle lands on the floor.
+                            // Recover anything dropped, then re-arm.
+                            foreach (ThingDef def in new[] { rifle, shotgun })
+                            {
+                                if (Carried(ammy, def) == null)
+                                {
+                                    Thing ground = ammy.Map.listerThings.ThingsOfDef(def).FirstOrDefault();
+                                    if (ground is ThingWithComps rec)
+                                    {
+                                        if (rec.Spawned)
+                                        {
+                                            rec.DeSpawn();
+                                        }
+                                        ammy.inventory.innerContainer.TryAdd(rec, false);
+                                    }
+                                }
+                            }
+                            ammy.TryGetComp<CompInventory>().UpdateInventory();
+                            step = "top-guns";
+                            foreach (ThingDef def in new[] { rifle, shotgun })
+                            {
+                                CompAmmoUser u = Carried(ammy, def)?.TryGetComp<CompAmmoUser>();
+                                if (u != null && u.CurMagCount < u.MagSize)
+                                {
+                                    u.ResetAmmoCount();
+                                }
+                            }
+                            step = "re-equip";
+                            if (ammy.equipment?.Primary == null && Carried(ammy, rifle) != null)
+                            {
+                                ammy.TryGetComp<CompInventory>().TrySwitchToWeapon(Carried(ammy, rifle));
+                            }
+                            step = "clear-scyther";
+                            if (warmupScyther != null && !warmupScyther.Destroyed)
+                            {
+                                warmupScyther.Destroy(); // must not shadow Mech()
+                            }
+                            step = "park-centipede";
+                            // 45 cells: outside the charge blaster's reach, inside the
+                            // rifle's — and far from the ammo cook-off that killed the
+                            // subject at 10. Downed so it cannot retaliate; downing can
+                            // KILL a mech outright, so one respawn retry.
+                            Pawn mech = Mech();
+                            for (int attempt = 0; attempt < 2 && (mech == null || !mech.Downed); attempt++)
+                            {
+                                if (mech == null)
+                                {
+                                    mech = SpawnMech("Mech_CentipedeBlaster", ammy, 45);
+                                }
+                                ParkPawnNear(ammy, mech, 45);
+                                if (!mech.Downed)
+                                {
+                                    HealthUtility.DamageUntilDowned(mech, allowBleedingWounds: false);
+                                }
+                                if (mech.Dead)
+                                {
+                                    mech = null;
+                                }
+                            }
+                            if (mech == null)
+                            {
+                                throw new InvalidOperationException("could not stage a downed centipede");
+                            }
+                            step = "attack";
+                            ammy.drafter.Drafted = true;
+                            Job job = JobMaker.MakeJob(JobDefOf.AttackStatic, mech);
+                            ammy.jobs.StartJob(job, JobCondition.InterruptForced);
+                        }
+                        catch (Exception e)
+                        {
+                            throw new Exception($"hopeless-warmup step '{step}': {e.Message}", e);
+                        }
+                    },
+                    // 45 cells can lack a firing line on this map (stance never leaves
+                    // Mobile). Step the downed centipede closer every ~300 ticks until a
+                    // shot happens; floor 22 keeps clear of the ammo cook-off blast.
+                    poll = () =>
+                    {
+                        if (!ammy.Spawned || ammy.stances?.curStance is Stance_Cooldown
+                            || Find.TickManager.TicksGame - hopelessAdjustTick < 300)
+                        {
+                            return;
+                        }
+                        Pawn mech = Mech();
+                        if (mech == null)
+                        {
+                            return;
+                        }
+                        hopelessAdjustTick = Find.TickManager.TicksGame;
+                        float d = mech.Position.DistanceTo(ammy.Position);
+                        if (d > 52f)
+                        {
+                            ParkPawnNear(ammy, mech, 45);
+                        }
+                        else if (ammy.stances?.curStance is Stance_Mobile && d > 22f)
+                        {
+                            ParkPawnNear(ammy, mech, (int)(d - 8f));
+                        }
+                    },
+                    checks =
+                    {
+                        P("world-is-ticking", () =>
+                            (Find.TickManager.TicksGame > 60, $"tick={Find.TickManager.TicksGame}")),
+                        C("subject-forensics", () =>
+                        {
+                            var hostiles = ammy.Spawned ? ammy.Map.mapPawns.AllPawnsSpawned
+                                .Where(x => x.HostileTo(Faction.OfPlayer)).Select(x =>
+                                    $"{x.def.defName}@{x.Position.DistanceTo(ammy.Position):F0}{(x.Downed ? "(downed)" : "")}")
+                                .ToList() : new List<string>();
+                            return (true, $"dead={ammy.Dead} spawned={ammy.Spawned} "
+                                + $"hp={(ammy.Dead ? 0f : ammy.health.summaryHealth.SummaryHealthPercent):F2} "
+                                + $"hostiles=[{string.Join(",", hostiles)}]");
+                        }, informational: true),
+                        C("a-shot-actually-fires", () =>
+                        {
+                            bool fired = ammy.stances?.curStance is Stance_Cooldown;
+                            return (fired, $"stance={ammy.stances?.curStance?.GetType()?.Name} "
+                                + $"job={ammy.CurJobDef?.defName} primary={ammy.equipment?.Primary?.def?.defName}");
                         }),
                     }
                 },
@@ -1167,9 +1346,21 @@ namespace CESSTacticsTestStaging
                     // SS's own P12-backed ranking picks the mace as least-bad. The
                     // observable pick matches feature-off ON PURPOSE — this phase pins
                     // the defer semantics; the feature's actual flip is phase 2's
-                    // knife-vs-flesh. Enable stays here so isolated runs still route
-                    // through F06.
-                    arrange = () => { TacticsMod.Settings.armorAwareMelee = true; },
+                    // knife-vs-flesh. A VANILLA-tools club (staging def, no CE data)
+                    // rides along: unmodelable weapons must neither win the armor
+                    // matchup by dodging the zeroing nor block the defer
+                    // (convergence C5).
+                    arrange = () =>
+                    {
+                        TacticsMod.Settings.armorAwareMelee = true;
+                        if (Carried(marcy, D("CESSTest_VanillaClub")) == null)
+                        {
+                            var club = (ThingWithComps)ThingMaker.MakeThing(D("CESSTest_VanillaClub"));
+                            marcy.inventory.innerContainer.TryAdd(club, false);
+                            marcy.TryGetComp<CompInventory>().UpdateInventory();
+                            CompSidearmMemory.GetMemoryCompForPawn(marcy)?.InformOfAddedSidearm(club);
+                        }
+                    },
                     checks =
                     {
                         C("blunt-vs-armored-mech", () =>
@@ -1207,6 +1398,14 @@ namespace CESSTacticsTestStaging
                     arrange = () =>
                     {
                         TacticsMod.Settings.armorAwareMelee = true;
+                        // The armor phase's vanilla club raw-beats the knife vs FLESH
+                        // even in stock SS — that phase's prop, not this one's.
+                        foreach (var club in marcy.GetCarriedWeapons(true, true)
+                            .Where(w => w.def == D("CESSTest_VanillaClub")).ToList())
+                        {
+                            club.Destroy(DestroyMode.Vanish);
+                        }
+                        marcy.TryGetComp<CompInventory>().UpdateInventory();
                         var ss = PeteTimesSix.SimpleSidearms.SimpleSidearms.Settings;
                         ss.CQCAutoSwitch = true;
                         ss.OptimalMelee = true; // marcy holds a melee weapon; CQC must still evaluate
@@ -1308,6 +1507,24 @@ namespace CESSTacticsTestStaging
                             abort.inventory.innerContainer.TryAdd(coded, false);
                             abort.TryGetComp<CompInventory>().UpdateInventory();
                             CompSidearmMemory.GetMemoryCompForPawn(abort)?.InformOfAddedSidearm(coded);
+                        }
+                        // A DRY second rifle with spares on hand: under the core patch's
+                        // axis 3 it counts as "viable" to SS — the loaded-now scope must
+                        // hide it or the abort equips an empty gun (C3's failing case).
+                        bool dryDecoyPresent = abort.GetCarriedWeapons(true, true).Any(w =>
+                            w.def == D("Gun_AssaultRifle") && w != abort.equipment?.Primary
+                            && (w.TryGetComp<CompAmmoUser>()?.CurMagCount ?? 1) == 0);
+                        if (!dryDecoyPresent)
+                        {
+                            var decoy = (ThingWithComps)ThingMaker.MakeThing(D("Gun_AssaultRifle"));
+                            var du = decoy.TryGetComp<CompAmmoUser>();
+                            if (du != null)
+                            {
+                                du.CurMagCount = 0;
+                            }
+                            abort.inventory.innerContainer.TryAdd(decoy, false);
+                            abort.TryGetComp<CompInventory>().UpdateInventory();
+                            CompSidearmMemory.GetMemoryCompForPawn(abort)?.InformOfAddedSidearm(decoy);
                         }
                         // Inside the autopistol's CE range (16), NOT the historical 40:
                         // the feature scores the swap candidate at the threat's actual
@@ -1671,6 +1888,67 @@ namespace CESSTacticsTestStaging
                 },
                 new Phase
                 {
+                    label = "a-loaded-twin-keeps-the-forced-branch-alive",
+                    deadlineTicks = 4000,
+                    // Convergence C2: dryness is judged for the forced PAIR, and the old
+                    // first-instance test let a drained twin speak for a loaded one —
+                    // hiding a forced gun SS's own branch would have equipped. Stage
+                    // both: twin A drained in hand, twin B loaded in the pack, no
+                    // spares. The forced branch must equip the LOADED twin.
+                    arrange = () =>
+                    {
+                        TacticsMod.Settings.forcedDryFallthrough = true;
+                        if (Carried(forcy, revolver) == null)
+                        {
+                            var rec = (ThingWithComps)ThingMaker.MakeThing(revolver);
+                            forcy.inventory.innerContainer.TryAdd(rec, false);
+                            forcy.TryGetComp<CompInventory>().UpdateInventory();
+                            CompSidearmMemory.GetMemoryCompForPawn(forcy)?.InformOfAddedSidearm(rec);
+                        }
+                        ForceDryRevolver(); // twin A: forced, in hand, drained; spares absent by staging
+                        var all = forcy.GetCarriedWeapons(true, true)
+                            .Where(w => w.def == revolver).ToList();
+                        if (all.Count < 2)
+                        {
+                            var twin = (ThingWithComps)ThingMaker.MakeThing(revolver);
+                            twin.TryGetComp<CompAmmoUser>()?.ResetAmmoCount();
+                            forcy.inventory.innerContainer.TryAdd(twin, false);
+                            forcy.TryGetComp<CompInventory>().UpdateInventory();
+                            CompSidearmMemory.GetMemoryCompForPawn(forcy)?.InformOfAddedSidearm(twin);
+                        }
+                        else
+                        {
+                            foreach (var w in all.Where(w => w != forcy.equipment?.Primary))
+                            {
+                                w.TryGetComp<CompAmmoUser>()?.ResetAmmoCount();
+                            }
+                        }
+                    },
+                    mutate = () => { CallEquip(); },
+                    checks =
+                    {
+                        P("dry-twin-in-hand-loaded-twin-in-pack", () =>
+                        {
+                            var all = forcy.GetCarriedWeapons(true, true)
+                                .Where(w => w.def == revolver)
+                                .Select(w => w.TryGetComp<CompAmmoUser>()?.CurMagCount ?? -1).ToList();
+                            bool ok = all.Count >= 2 && all.Any(m => m == 0) && all.Any(m => m > 0);
+                            return (ok, $"revolverMags=[{string.Join(",", all)}]");
+                        }),
+                        C("forced-branch-stays-alive", () =>
+                        {
+                            // WHICH twin SS draws is its own MarketValue tie-break (equal
+                            // twins → arbitrary) — the pin is that the pair is NOT hidden:
+                            // the forced branch runs and a revolver ends up in hand
+                            // instead of the fall-through pistol.
+                            ThingDef primary = forcy.equipment?.Primary?.def;
+                            return (primary == revolver,
+                                $"primary={primary?.defName ?? "none"} (fall-through here = the dry twin spoke for the pair)");
+                        }),
+                    }
+                },
+                new Phase
+                {
                     label = "mid-refill-the-forced-branch-waits",
                     deadlineTicks = 4000,
                     // T3-11: while the forced gun's refill job is literally in flight,
@@ -1681,6 +1959,19 @@ namespace CESSTacticsTestStaging
                     arrange = () =>
                     {
                         TacticsMod.Settings.forcedDryFallthrough = true;
+                        // The loaded-twin phase leaves a second pair instance; with a
+                        // loaded twin the pair is (correctly) never dry, which is that
+                        // phase's point but this one's poison. Keep exactly one.
+                        var twins = forcy.GetCarriedWeapons(true, true)
+                            .Where(w => w.def == revolver).Skip(1).ToList();
+                        foreach (var extra in twins)
+                        {
+                            extra.Destroy(DestroyMode.Vanish);
+                        }
+                        if (twins.Count > 0)
+                        {
+                            forcy.TryGetComp<CompInventory>().UpdateInventory();
+                        }
                         CompSidearmMemory mem6 = CompSidearmMemory.GetMemoryCompForPawn(forcy);
                         if (mem6 != null)
                         {
@@ -1696,7 +1987,7 @@ namespace CESSTacticsTestStaging
                         {
                             Thing ground = forcy.Map.listerThings.ThingsOfDef(revolver).FirstOrDefault();
                             ThingWithComps rec = ground as ThingWithComps
-                                ?? (ThingWithComps)ThingMaker.MakeThing(revolver, D("Steel"));
+                                ?? (ThingWithComps)ThingMaker.MakeThing(revolver);
                             if (rec.Spawned)
                             {
                                 rec.DeSpawn();

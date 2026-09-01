@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Defs>
+  <!-- A VANILLA-tools melee weapon that no CE patch touches: the staging prop for
+       the convergence C5 pin (unmodelable weapons must pass through target-aware
+       melee scoring untouched and must not block the all-hopeless defer). -->
+  <ThingDef ParentName="BaseMeleeWeapon_Blunt">
+    <defName>CESSTest_VanillaClub</defName>
+    <label>test vanilla club</label>
+    <description>Test staging prop: a melee weapon with vanilla tools (no CE ToolCE data).</description>
+    <graphicData>
+      <texPath>Things/Item/Equipment/WeaponMelee/Club</texPath>
+      <graphicClass>Graphic_Single</graphicClass>
+    </graphicData>
+    <techLevel>Neolithic</techLevel>
+    <statBases>
+      <WorkToMake>1000</WorkToMake>
+      <Mass>2</Mass>
+      <MarketValue>30</MarketValue>
+    </statBases>
+    <tools>
+      <li>
+        <label>head</label>
+        <capacities>
+          <li>Blunt</li>
+        </capacities>
+        <power>14</power>
+        <cooldownTime>1.6</cooldownTime>
+        <armorPenetration>0.2</armorPenetration>
+      </li>
+    </tools>
+  </ThingDef>
+</Defs>
