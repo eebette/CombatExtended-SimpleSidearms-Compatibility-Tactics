@@ -10,6 +10,7 @@ using PeteTimesSix.SimpleSidearms;
 using PeteTimesSix.SimpleSidearms.Utilities;
 using RimWorld;
 using SimpleSidearms.rimworld;
+using UnityEngine;
 using Verse;
 using Verse.AI;
 
@@ -831,6 +832,29 @@ namespace CESSTacticsTestStaging
             attacker.jobs.StartJob(job, JobCondition.InterruptForced);
         }
 
+        /// <summary>ParkPawnNear only places due EAST; from some anchors that whole
+        /// line is LOS-blocked at every distance. Walk a ring of bearings and take
+        /// the first standable cell the anchor can actually see.</summary>
+        private static void ParkWithLOS(Pawn anchor, Pawn parked, int distance)
+        {
+            Map map = anchor.Map;
+            for (int i = 0; i < 16; i++)
+            {
+                float angle = i * 22.5f * Mathf.Deg2Rad;
+                IntVec3 cell = anchor.Position + new IntVec3(
+                    Mathf.RoundToInt(distance * Mathf.Cos(angle)), 0,
+                    Mathf.RoundToInt(distance * Mathf.Sin(angle)));
+                cell = cell.ClampInsideMap(map);
+                if (cell.Standable(map) && GenSight.LineOfSight(anchor.Position, cell, map, skipFirstCell: true))
+                {
+                    parked.Position = cell;
+                    parked.Notify_Teleported();
+                    return;
+                }
+            }
+            ParkPawnNear(anchor, parked, distance); // no visible ring cell — east fallback
+        }
+
         private static Pawn SpawnMech(string kindDefName, Pawn anchor, int distance)
         {
             PawnKindDef kind = DefDatabase<PawnKindDef>.GetNamedSilentFail(kindDefName)
@@ -871,6 +895,7 @@ namespace CESSTacticsTestStaging
             Pawn scyther = null;
             Pawn warmupScyther = null;
             int hopelessAdjustTick = 0;
+            string hopelessStaging = "";
 
             (ThingWithComps weapon, float dps, float averageSpeed) FindBest(Pawn target) =>
                 GettersFilters.findBestRangedWeapon(ammy, new LocalTargetInfo(target));
@@ -1121,6 +1146,39 @@ namespace CESSTacticsTestStaging
                         TacticsMod.Settings.targetAwareAmmoScoring = true;
                         PeteTimesSix.SimpleSidearms.SimpleSidearms.Settings.RangedCombatAutoSwitch = true;
                         PeteTimesSix.SimpleSidearms.SimpleSidearms.Settings.RangedCombatAutoSwitchMaxWarmup = 0.9f;
+                        // Neutralize the centipede HERE, not in mutate: isolated runs
+                        // load with it live at its saved ~8 cells, and the
+                        // world-is-ticking gate hands it 60 free ticks to down the
+                        // subject before mutate could act. Position and health writes
+                        // are tick-0-safe (the tick-0 lie is about caches and stances).
+                        // NOTE: DamageUntilDowned often CANNOT down a mech (it ends
+                        // alive at ~8% hp) — the real shield is the 45-cell park,
+                        // outside the charge blaster's reach; the wounding just makes
+                        // the first rifle hit decisive.
+                        Pawn mech0 = Mech();
+                        int attempts = 0;
+                        for (int attempt = 0; attempt < 2 && (mech0 == null || !mech0.Downed); attempt++)
+                        {
+                            attempts++;
+                            if (mech0 == null)
+                            {
+                                mech0 = SpawnMech("Mech_CentipedeBlaster", ammy, 45);
+                            }
+                            ParkWithLOS(ammy, mech0, 45);
+                            if (!mech0.Downed)
+                            {
+                                HealthUtility.DamageUntilDowned(mech0, allowBleedingWounds: false);
+                            }
+                            if (mech0.Dead)
+                            {
+                                mech0 = null;
+                            }
+                        }
+                        hopelessStaging = mech0 == null
+                            ? $"attempts={attempts} mech=DEAD"
+                            : $"attempts={attempts} dist={mech0.Position.DistanceTo(ammy.Position):F0} "
+                              + $"downed={mech0.Downed} hp={mech0.health.summaryHealth.SummaryHealthPercent:F2} "
+                              + $"ammyPos={ammy.Position} mechPos={mech0.Position}";
                     },
                     mutate = () =>
                     {
@@ -1156,7 +1214,11 @@ namespace CESSTacticsTestStaging
                                 }
                             }
                             step = "re-equip";
-                            if (ammy.equipment?.Primary == null && Carried(ammy, rifle) != null)
+                            // The RIFLE, unconditionally: isolated runs load with the
+                            // save's shotgun in hand, whose ~16 range never reaches the
+                            // 45-cell target — the pawn stood Mobile forever. Sequenced
+                            // only worked because the warmup phase had already swapped.
+                            if (ammy.equipment?.Primary?.def != rifle && Carried(ammy, rifle) != null)
                             {
                                 ammy.TryGetComp<CompInventory>().TrySwitchToWeapon(Carried(ammy, rifle));
                             }
@@ -1166,31 +1228,7 @@ namespace CESSTacticsTestStaging
                                 warmupScyther.Destroy(); // must not shadow Mech()
                             }
                             step = "park-centipede";
-                            // 45 cells: outside the charge blaster's reach, inside the
-                            // rifle's — and far from the ammo cook-off that killed the
-                            // subject at 10. Downed so it cannot retaliate; downing can
-                            // KILL a mech outright, so one respawn retry.
-                            Pawn mech = Mech();
-                            for (int attempt = 0; attempt < 2 && (mech == null || !mech.Downed); attempt++)
-                            {
-                                if (mech == null)
-                                {
-                                    mech = SpawnMech("Mech_CentipedeBlaster", ammy, 45);
-                                }
-                                ParkPawnNear(ammy, mech, 45);
-                                if (!mech.Downed)
-                                {
-                                    HealthUtility.DamageUntilDowned(mech, allowBleedingWounds: false);
-                                }
-                                if (mech.Dead)
-                                {
-                                    mech = null;
-                                }
-                            }
-                            if (mech == null)
-                            {
-                                throw new InvalidOperationException("could not stage a downed centipede");
-                            }
+                            Pawn mech = Mech() ?? throw new InvalidOperationException("no downed centipede staged");
                             step = "attack";
                             ammy.drafter.Drafted = true;
                             Job job = JobMaker.MakeJob(JobDefOf.AttackStatic, mech);
@@ -1220,17 +1258,20 @@ namespace CESSTacticsTestStaging
                         float d = mech.Position.DistanceTo(ammy.Position);
                         if (d > 52f)
                         {
-                            ParkPawnNear(ammy, mech, 45);
+                            ParkWithLOS(ammy, mech, 45);
                         }
-                        else if (ammy.stances?.curStance is Stance_Mobile && d > 22f)
+                        else if (ammy.stances?.curStance is Stance_Mobile)
                         {
-                            ParkPawnNear(ammy, mech, (int)(d - 8f));
+                            // Still no firing solution: LOS-park on a ring, stepping
+                            // closer each pass (floor 22 — cook-off clearance).
+                            ParkWithLOS(ammy, mech, (int)Mathf.Max(d - 8f, 22f));
                         }
                     },
                     checks =
                     {
                         P("world-is-ticking", () =>
                             (Find.TickManager.TicksGame > 60, $"tick={Find.TickManager.TicksGame}")),
+                        C("staging-snapshot", () => (true, hopelessStaging), informational: true),
                         C("subject-forensics", () =>
                         {
                             var hostiles = ammy.Spawned ? ammy.Map.mapPawns.AllPawnsSpawned

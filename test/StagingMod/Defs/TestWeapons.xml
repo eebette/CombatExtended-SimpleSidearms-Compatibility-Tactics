@@ -17,6 +17,10 @@
       <Mass>2</Mass>
       <MarketValue>30</MarketValue>
     </statBases>
+    <costList>
+      <WoodLog>10</WoodLog>
+    </costList>
+    <smeltable>false</smeltable>
     <tools>
       <li>
         <label>head</label>
