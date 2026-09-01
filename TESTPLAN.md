@@ -36,29 +36,44 @@ tact3→TACT-3-tiebreak, tact4→TACT-4-ammo-target, tact5→TACT-5-melee-target
   each phase that needs a toggle enables it ITSELF (arrange or mutate), so
   isolated runs test what the label claims.
 
-## Green pass — 2026-08-31 (T2: CE-true target scoring; F07 + the F04 rework)
+## Green pass — 2026-09-01 (T3: adversarial round fixed and pinned)
 
-24 phases (18 behavioral + 6 census), sequenced AND isolated:
+30 phases (24 behavioral + 6 census), sequenced AND isolated. The T3
+adversarial round (three independent reviewers over the full source +
+decompiles) found the headline target-aware features DEAD OR SUPPRESSED in
+real play behind a green suite — every fix below is pinned by a phase driven
+through the REAL entry point (doCQC, warmup auto-switch, CE's own top-off),
+not a direct API call:
 
 - **tact1 (reload-abort, F01)**: feature-off reload completes; feature-on
   mid-reload swap to the loaded pistol with a hostile INSIDE the pistol's CE
-  range; player-forced reload completes with the feature on and a viable swap
-  in range (the forced gate is the only thing letting it finish).
+  range — now staged past a loaded BIOCODED rifle the winner scan must skip
+  (T3-5); player-forced reload completes with the feature on and a viable
+  swap in range; and CE's own undrafted backpack top-off completes with a
+  hostile visible in the old trigger band while the primary never moves
+  (T3-1 — unfixed, F01 killed the top-off and juggled weapons forever).
 - **tact2 (forced-dry, F03)**: feature-off forced branch holds a dry revolver;
   feature-on falls through to the loaded pistol with the ForcedWeapon flag
-  intact; ammo back → forced revolver resumes from the fallen-through state.
+  intact; ammo back → forced revolver resumes from the fallen-through state;
+  a REAL adjacent swing (doCQC through CE's melee verb) draws the knife past
+  the truly-dry forced gun with the flag surviving (T3-6); and while the
+  forced gun's refill job is in flight the forced branch waits instead of
+  re-equipping it at zero rounds (T3-11).
 - **tact3 (ammo-depth tiebreak, F04)**: equal-DPS twins resolve to the
   deeper-magazine twin; a clearly better rifle with 1 round still wins
   (the tie window stays subordinate to DPS).
 - **tact4 (target-aware ammo scoring, F05 core)**: at 8 cells the buckshot
-  shotgun raw-wins; a scyther's armor (which the rifle penetrates and buckshot
-  does not) flips the pick to the rifle; centipede plate zeroes EVERY
-  multiplier and the feature stands down — SS's raw pick survives untouched
-  (the zero-defer branch). No SelectedAmmo writes anywhere.
-- **tact5 (armor-aware melee, F06)**: knife beats mace vs flesh (the de-biased
-  CE damage-per-second, the feature's headline flip); vs centipede plate every
-  through-armor fraction is zero and F06 defers to SS's own P12-backed pick
-  (the mace as least-bad).
+  shotgun raw-wins; a scyther's armor flips the pick to the rifle; centipede
+  plate zeroes EVERY multiplier and the feature stands down; the stand-down
+  never resurrects a DRY gun (T3-4 — a drained raw-best shotgun loses to the
+  loaded rifle); and the REAL warmup auto-switch draws the rifle mid-aim
+  against the scyther (T3-3 — the old adjusted-vs-raw comparison never
+  swapped outside the harness). No SelectedAmmo writes anywhere.
+- **tact5 (armor-aware melee, F06)**: knife beats mace vs flesh and the mace
+  stands vs centipede plate — both now driven through SS's preference tree
+  with the target (the scope's real entry), because a bare findBestMeleeWeapon
+  call is exactly the dead wiring T3-2 fixed; plus the full chain: a REAL
+  adjacent swing triggers doCQC and the knife comes out of the pawn's pocket.
 - **tact6 (drafted sidearm top-off, F07 — shares TACT-1's save)**: feature-off
   a drafted pawn's empty sidearm stays empty through a quiet lull (invariant
   held across the window); feature-on the lull fills it through CE's own job
@@ -151,7 +166,83 @@ tact3→TACT-3-tiebreak, tact4→TACT-4-ammo-target, tact5→TACT-5-melee-target
    `arrange` (idempotent when sequenced) behind prerequisites-only
    preconditions, and enables its own toggle.
 
-## A/B spot-proofs
+12. **T3 (2026-09-01), the adversarial round's own ledger.** Three independent
+   attackers (state/lifecycle, cross-patch interplay, player-perspective)
+   converged on the same meta-finding: the suite tested SS's selection APIs
+   in shapes the game never calls, which let two headline features hide dead
+   or suppressed behind green phases. Fixed and pinned:
+   - **T3-1** F01 identified "reloading" with "the equipped gun is empty" —
+     CE's undrafted top-offs and F07's drafted top-offs falsified it; the
+     abort now touches only reloads of the gun in hand.
+   - **T3-2** F06's target parameter was dead wiring (SS never forwards the
+     CQC target into findBestMeleeWeapon); reworked to the F04 scope pattern
+     on the preference method — which also fixed the cancelled speed bias
+     (averageSpeed:0) and the copied-filter drift in one move.
+   - **T3-3** trySwapToMoreAccurateRangedWeapon compared the challenger's
+     ADJUSTED score to the incumbent's RAW score (scored after the scope
+     closed) — the promote direction could never fire; the scope now spans
+     the whole caller.
+   - **T3-4** the all-hopeless defer resurrected DRY guns (records carry
+     paper scores; P03's correction had already run); the defer now filters
+     to guns with rounds.
+   - **T3-5** F01's winner scan lacked SS's usability rule (biocode/bond/
+     role) and ignored the forced flag — both added, filtered at candidacy.
+   - **T3-6** the fall-through never covered the melee-attacked reflex (SS's
+     forced check sits a call above the patched method); a second hide with
+     the same always-restore discipline covers tryCQCWeaponSwapToMelee.
+   - **T3-11** a refill-in-flight made the forced gun look "not dry" and the
+     forced branch re-equipped it at 0 rounds, killing its own refill; the
+     dryness test now counts an in-flight reload of that gun as still-dry.
+   - Accepted + documented: **T3-7** (a drafted melee-primary pawn topping
+     off a sidearm eats a charger's approach plus one hit before reacting —
+     CE's own drafted-reload risk model extended; proactive melee draw filed
+     as issue #4/F08 candidate) and **T3-9** (CE's reload driver kills ANY
+     reload on a primary change, backpack ones included — the compat P05
+     comment now states it; the killed top-off re-issues next lull, no rounds
+     lost). **T3-8** (compat): AskSS now refuses, loudly, when its halting
+     prefix failed to install — upstream drift can no longer turn the
+     "hypothetical" preference question into real equips. **T3-10**: F01
+     serves every loaded map, not just the watched one.
+   - Staging lessons the round forced: CQC phases drive the swing THROUGH
+     THE REAL VERB (raider.meleeVerbs.TryMeleeAttack each poll — a free
+     raider re-targets other colonists, and even a forced attack job loses
+     the swing race to the deadline ~50% of isolated runs); SS's InDistress
+     swap throws the replaced weapon on the GROUND, so later phases recover
+     it; SS's DefaultRanged branch re-equips preferred guns with no dry
+     check of its own — phases pinning the FORCED branch must clear
+     DefaultRangedWeapon; a wandering mech drifts its dry challenger out of
+     the range window and turns an A-leg vacuous (re-park via poll); and
+     the warmup phase stages in mutate behind world-is-ticking, because
+     tick-0 arranges lie (core suite lesson, relearned).
+
+## A/B — the T3 fix set (2026-09-01, every leg run and red)
+
+Each fix scratch-reverted (sed), its pinning phase proven RED, restored, the
+scenario proven green. Lessons from legs that came back green the first time:
+
+- **T3-1** (job-identity gate): red only once the phase staged a LOADED second
+  sidearm — without a livelock winner the old code's scan came up empty and
+  "kept reloading" by luck. A-leg signature: primary swapped to the revolver,
+  top-off dead at 0/7.
+- **T3-2** (melee scope): all three tact5 target phases red; census stays
+  green ON PURPOSE — F03 still patches the same method, so the count holds
+  and only behavior detects this class going dark.
+- **T3-3** (trySwap scope): census red (9 < 10) + the real-warmup phase red.
+- **T3-4** (defer dry-filter): red only after a re-parking poll pinned the
+  centipede inside the dry shotgun's own range window — past ~16 cells SS's
+  range filter drops the shotgun before scoring, no record exists, and the
+  leg passed vacuously (forensics: raw=-1 at dist 17).
+- **T3-5** (usability filter): the staged biocoded rifle gets crowned, the
+  equip is refused, the swap phase red.
+- **T3-6** (CQC coverage): census red + knife-draw phase red.
+- **T3-11** (refill-in-flight): red only through the MELEE-override preference
+  pass — a plain Combat-mode pass is blocked mid-reload by the core patch's
+  P05 guard, and the first version of the leg accidentally pinned P05 instead.
+- **T3-8/T3-9/T3-10**: compat-side guard, comment correction, and the
+  all-maps loop — covered by the compat suite's green re-cert (cetest2/3) and
+  the doctrine's Prepare-guard convention; no dedicated legs.
+
+## A/B spot-proofs (T1/T2 rounds, kept for history)
 
 Every failing-capable scenario proven able to fail (scratch sed-toggles, then
 reverted; script pattern in the compat repo's TESTPLAN):

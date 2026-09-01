@@ -254,13 +254,16 @@ namespace CESSTacticsTestStaging
                                 return info != null && info.Owners.Contains("eebette.CESimpleSidearmsCompat.Tactics");
                             })
                             .ToList();
-                        // 7 distinct methods today: equipBestWeaponFromInventoryByPreference
-                        // (forced-dry), SetWeaponAsForced (lesson note), findBestRangedWeapon
-                        // (selection scope), RangedDPS + RangedDPSAverage (in-scope score
-                        // adjustment/recording), findBestMeleeWeapon (armor-aware),
+                        // 10 distinct methods today: equipBestWeaponFromInventoryByPreference
+                        // (forced-dry hide + melee scope), SetWeaponAsForced (lesson note),
+                        // tryCQCWeaponSwapToMelee (forced-dry CQC coverage),
+                        // findBestRangedWeapon (selection scope), RangedDPS + RangedDPSAverage
+                        // (in-scope adjustment/recording), trySwapToMoreAccurateRangedWeapon
+                        // (symmetric swap comparison), findBestMeleeWeapon (all-hopeless defer),
+                        // getMeleeDPSBiased (in-scope melee adjustment),
                         // JobGiver_CheckReload.DoReloadCheck (drafted sidearm top-off).
-                        return (mine.Count >= 7,
-                            $"methods patched by eebette.CESimpleSidearmsCompat.Tactics={mine.Count} (want >= 7): "
+                        return (mine.Count >= 10,
+                            $"methods patched by eebette.CESimpleSidearmsCompat.Tactics={mine.Count} (want >= 10): "
                             + string.Join(", ", mine.Select(m => m.DeclaringType?.Name + "." + m.Name).OrderBy(n => n)));
                     }),
                 }
@@ -808,6 +811,14 @@ namespace CESSTacticsTestStaging
             };
         }
 
+        private static void ForceMeleeAttack(Pawn attacker, Pawn victim)
+        {
+            Job job = JobMaker.MakeJob(JobDefOf.AttackMelee, victim);
+            job.expiryInterval = 500;
+            job.checkOverrideOnExpire = false;
+            attacker.jobs.StartJob(job, JobCondition.InterruptForced);
+        }
+
         private static Pawn SpawnMech(string kindDefName, Pawn anchor, int distance)
         {
             PawnKindDef kind = DefDatabase<PawnKindDef>.GetNamedSilentFail(kindDefName)
@@ -846,6 +857,7 @@ namespace CESSTacticsTestStaging
             ThingDef rifle = D("Gun_AssaultRifle");
             ThingDef shotgun = D("Gun_PumpShotgun");
             Pawn scyther = null;
+            Pawn warmupScyther = null;
 
             (ThingWithComps weapon, float dps, float averageSpeed) FindBest(Pawn target) =>
                 GettersFilters.findBestRangedWeapon(ammy, new LocalTargetInfo(target));
@@ -933,6 +945,131 @@ namespace CESSTacticsTestStaging
                         }),
                     }
                 },
+                new Phase
+                {
+                    label = "defer-never-resurrects-a-dry-gun",
+                    deadlineTicks = 3000,
+                    // T3-4: records include dry weapons at full paper score, and the
+                    // core patch's dry-pick correction has already run by the time the
+                    // defer fires. Drain the raw-best shotgun completely: the stand-down
+                    // must land on the loaded rifle, never the empty shotgun.
+                    arrange = () =>
+                    {
+                        TacticsMod.Settings.targetAwareAmmoScoring = true;
+                        CompAmmoUser su = Carried(ammy, shotgun).TryGetComp<CompAmmoUser>();
+                        su.CurMagCount = 0;
+                        var shotgunAmmo = su.Props?.ammoSet?.ammoTypes?.Select(l => (ThingDef)l.ammo).ToList();
+                        if (shotgunAmmo != null)
+                        {
+                            foreach (Thing t in ammy.inventory.innerContainer
+                                .Where(t => shotgunAmmo.Contains(t.def)).ToList())
+                            {
+                                t.Destroy(DestroyMode.Vanish);
+                            }
+                            ammy.TryGetComp<CompInventory>().UpdateInventory();
+                        }
+                        if (scyther != null && !scyther.Destroyed)
+                        {
+                            scyther.Destroy();
+                        }
+                        ParkPawnNear(ammy, Mech(), 8);
+                    },
+                    // The centipede wanders: past ~16 cells the dry shotgun leaves its
+                    // own range window, gets no record at all, and the A-leg passes
+                    // vacuously (seen at dist=17, raw=-1). Keep the matchup staged.
+                    poll = () =>
+                    {
+                        Pawn mech = Mech();
+                        if (mech != null && mech.Position.DistanceTo(ammy.Position) > 12f)
+                        {
+                            ParkPawnNear(ammy, mech, 8);
+                        }
+                    },
+                    checks =
+                    {
+                        P("shotgun-truly-dry", () =>
+                        {
+                            CompAmmoUser su = Carried(ammy, shotgun).TryGetComp<CompAmmoUser>();
+                            return (su.CurMagCount == 0 && !su.HasAmmo, $"mag={su.CurMagCount} hasAmmo={su.HasAmmo}");
+                        }),
+                        C("defer-forensics", () =>
+                        {
+                            float bias = PeteTimesSix.SimpleSidearms.SimpleSidearms.Settings.SpeedSelectionBiasRanged;
+                            Pawn mech = Mech();
+                            float dist = mech.Position.DistanceTo(ammy.Position);
+                            string line = string.Join(" ", new[] { rifle, shotgun }.Select(def =>
+                            {
+                                ThingWithComps w = Carried(ammy, def);
+                                CompAmmoUser u = w?.TryGetComp<CompAmmoUser>();
+                                float raw = w != null ? StatCalculator.RangedDPS(w, bias, 0f, dist) : -9f;
+                                float mult = w != null ? CESSCompatTactics.Features.TargetScoring.RangedMultiplier(w, mech) : -9f;
+                                return $"{def.defName}: raw={raw:F1} mult={mult:F2} mag={u?.CurMagCount} hasAmmo={u?.HasAmmo}";
+                            }));
+                            return (true, $"dist={dist:F0} {line}");
+                        }, informational: true),
+                        C("stand-down-lands-on-a-loaded-gun", () =>
+                        {
+                            var (weapon, dps, _) = FindBest(Mech());
+                            return (weapon?.def == rifle, $"pick={weapon?.def?.defName} adj={dps:F2}");
+                        }),
+                    }
+                },
+                new Phase
+                {
+                    label = "warmup-swap-actually-draws-the-penetrator",
+                    deadlineTicks = 7000,
+                    // T3-3: the ONLY in-game path that feeds a target into ranged
+                    // selection is the warmup auto-switch — and it used to compare the
+                    // challenger's armor-adjusted score against the incumbent's RAW
+                    // score, so the flip never fired outside the harness. Staging lives
+                    // in mutate behind a world-is-ticking gate: isolated runs arrange at
+                    // tick 0, where CE's caches and stance machinery lie (core suite
+                    // lesson), and this phase broke both ways there before the gate.
+                    arrange = () =>
+                    {
+                        TacticsMod.Settings.targetAwareAmmoScoring = true;
+                        PeteTimesSix.SimpleSidearms.SimpleSidearms.Settings.RangedCombatAutoSwitch = true;
+                        PeteTimesSix.SimpleSidearms.SimpleSidearms.Settings.RangedCombatAutoSwitchMaxWarmup = 0.9f;
+                    },
+                    mutate = () =>
+                    {
+                        // reload whatever earlier phases drained; both guns must be live
+                        foreach (ThingDef def in new[] { rifle, shotgun })
+                        {
+                            CompAmmoUser u = Carried(ammy, def).TryGetComp<CompAmmoUser>();
+                            if (u.CurMagCount < u.MagSize)
+                            {
+                                u.ResetAmmoCount();
+                            }
+                        }
+                        ammy.TryGetComp<CompInventory>().UpdateInventory();
+                        ThingWithComps sg = Carried(ammy, shotgun);
+                        if (ammy.equipment?.Primary != sg)
+                        {
+                            ammy.TryGetComp<CompInventory>().TrySwitchToWeapon(sg);
+                        }
+                        warmupScyther = SpawnMech("Mech_Scyther", ammy, 14);
+                        ammy.drafter.Drafted = true;
+                        Job job = JobMaker.MakeJob(JobDefOf.AttackStatic, warmupScyther);
+                        ammy.jobs.StartJob(job, JobCondition.InterruptForced);
+                    },
+                    checks =
+                    {
+                        P("world-is-ticking", () =>
+                            (Find.TickManager.TicksGame > 60, $"tick={Find.TickManager.TicksGame}")),
+                        C("staging-forensics", () =>
+                        {
+                            float dist = warmupScyther?.Position.DistanceTo(ammy.Position) ?? -1f;
+                            return (true, $"primary={ammy.equipment?.Primary?.def?.defName} dist={dist:F0} "
+                                + $"job={ammy.CurJobDef?.defName} scytherDead={warmupScyther?.Dead}");
+                        }, informational: true),
+                        C("warmup-draws-the-rifle", () =>
+                        {
+                            ThingDef primary = ammy.equipment?.Primary?.def;
+                            return (primary == rifle, $"primary={primary?.defName} job={ammy.CurJobDef?.defName}");
+                        }),
+                    }
+                },
             };
         }
 
@@ -944,6 +1081,7 @@ namespace CESSTacticsTestStaging
             ThingDef knife = D("MeleeWeapon_Knife");
             ThingDef mace = D("MeleeWeapon_Mace");
             Pawn fleshTarget = null;
+            Pawn cqcAttacker = null;
             string fleshForensics = "";
 
             ThingWithComps FindMelee(Pawn target)
@@ -994,7 +1132,7 @@ namespace CESSTacticsTestStaging
                         // can be poisoned by the brawl (the check itself stays live).
                         float bias = PeteTimesSix.SimpleSidearms.SimpleSidearms.Settings.SpeedSelectionBiasMelee;
                         var sb = new System.Text.StringBuilder();
-                        sb.Append($"pickAtMutate={FindMelee(fleshTarget)?.def?.defName ?? "fists"} ");
+                        sb.Append($"rawPickAtMutate={FindMelee(fleshTarget)?.def?.defName ?? "fists"} (unscoped SS pick) ");
                         foreach (ThingWithComps w in marcy.GetCarriedWeapons(true, true))
                         {
                             float ss = StatCalculator.getMeleeDPSBiased(w, marcy, bias, 0f);
@@ -1009,8 +1147,14 @@ namespace CESSTacticsTestStaging
                         C("flesh-forensics", () => (true, $"{fleshForensics} nowDowned={marcy.Downed}"), informational: true),
                         C("blade-vs-flesh", () =>
                         {
-                            ThingWithComps w = FindMelee(fleshTarget);
-                            return (w?.def == knife, $"pick vs flesh={w?.def?.defName ?? "fists"} armor={fleshTarget.GetStatValue(StatDefOf.ArmorRating_Sharp):F2}");
+                            // Through the preference tree WITH the target — the entry the
+                            // T3-2 rework hooks. A bare findBestMeleeWeapon call opens no
+                            // scope on purpose (that is the dead wiring the rework fixed).
+                            WeaponAssingment.equipBestWeaponFromInventoryByPreference(
+                                marcy, PeteTimesSix.SimpleSidearms.Utilities.Enums.DroppingModeEnum.Combat,
+                                PeteTimesSix.SimpleSidearms.Utilities.Enums.PrimaryWeaponMode.Melee, fleshTarget);
+                            ThingDef primary = marcy.equipment?.Primary?.def;
+                            return (primary == knife, $"primary vs flesh={primary?.defName ?? "fists"} armor={fleshTarget.GetStatValue(StatDefOf.ArmorRating_Sharp):F2}");
                         }),
                     }
                 },
@@ -1031,8 +1175,11 @@ namespace CESSTacticsTestStaging
                         C("blunt-vs-armored-mech", () =>
                         {
                             Pawn mech = Mech();
-                            ThingWithComps w = FindMelee(mech);
-                            return (w?.def == mace, $"pick vs mech={w?.def?.defName ?? "fists"} sharpArmor={mech.GetStatValue(StatDefOf.ArmorRating_Sharp):F1} bluntArmor={mech.GetStatValue(StatDefOf.ArmorRating_Blunt):F1}");
+                            WeaponAssingment.equipBestWeaponFromInventoryByPreference(
+                                marcy, PeteTimesSix.SimpleSidearms.Utilities.Enums.DroppingModeEnum.Combat,
+                                PeteTimesSix.SimpleSidearms.Utilities.Enums.PrimaryWeaponMode.Melee, mech);
+                            ThingDef primary = marcy.equipment?.Primary?.def;
+                            return (primary == mace, $"primary vs mech={primary?.defName ?? "fists"} sharpArmor={mech.GetStatValue(StatDefOf.ArmorRating_Sharp):F1} bluntArmor={mech.GetStatValue(StatDefOf.ArmorRating_Blunt):F1}");
                         }),
                         C("tool-forensics", () =>
                         {
@@ -1045,6 +1192,65 @@ namespace CESSTacticsTestStaging
                             }));
                             return (true, line);
                         }, informational: true),
+                    }
+                },
+                new Phase
+                {
+                    label = "a-real-swing-draws-the-knife",
+                    deadlineTicks = 9000,
+                    // T3-2: the direct-call phases above proved the MATH while the
+                    // WIRING was dead — no in-game caller ever passed a target. This
+                    // phase drives the real chain: an adjacent flesh raider swings,
+                    // doCQC fires, the scope carries the attacker into SS's melee
+                    // selection, and vs bare flesh the de-biased CE dps picks the
+                    // knife over the mace SS would choose target-blind.
+                    arrange = () =>
+                    {
+                        TacticsMod.Settings.armorAwareMelee = true;
+                        var ss = PeteTimesSix.SimpleSidearms.SimpleSidearms.Settings;
+                        ss.CQCAutoSwitch = true;
+                        ss.OptimalMelee = true; // marcy holds a melee weapon; CQC must still evaluate
+                        ThingWithComps maceInst = Carried(marcy, mace);
+                        if (marcy.equipment?.Primary != maceInst)
+                        {
+                            marcy.TryGetComp<CompInventory>().TrySwitchToWeapon(maceInst);
+                        }
+                        cqcAttacker = Raider();
+                        if (cqcAttacker == null)
+                        {
+                            SpawnThreat(marcy.Map);
+                            cqcAttacker = Raider();
+                        }
+                        cqcAttacker.equipment?.DestroyAllEquipment();
+                        cqcAttacker.apparel?.DestroyAll();
+                        ParkPawnNear(marcy, cqcAttacker, 2);
+                        ForceMeleeAttack(cqcAttacker, marcy);
+                    },
+                    poll = () =>
+                    {
+                        if (cqcAttacker != null && !cqcAttacker.Dead && !cqcAttacker.Downed
+                            && (cqcAttacker.CurJobDef != JobDefOf.AttackMelee
+                                || cqcAttacker.CurJob?.targetA.Thing != marcy))
+                        {
+                            ParkPawnNear(marcy, cqcAttacker, 2);
+                            ForceMeleeAttack(cqcAttacker, marcy);
+                        }
+                    },
+                    checks =
+                    {
+                        P("mace-in-hand-attacker-adjacent", () =>
+                        {
+                            float dist = cqcAttacker?.Position.DistanceTo(marcy.Position) ?? -1f;
+                            return (marcy.equipment?.Primary?.def == mace && cqcAttacker != null
+                                    && !cqcAttacker.Dead && dist < 8f,
+                                $"primary={marcy.equipment?.Primary?.def?.defName} dist={dist:F0}");
+                        }),
+                        C("swing-triggers-the-knife", () =>
+                        {
+                            ThingDef primary = marcy.equipment?.Primary?.def;
+                            string carried = string.Join(",", marcy.GetCarriedWeapons(true, true).Select(w => w.def.defName));
+                            return (primary == knife, $"primary={primary?.defName ?? "none"} carried=[{carried}] raiderJob={cqcAttacker?.CurJobDef?.defName ?? "-"}");
+                        }),
                     }
                 },
             };
@@ -1087,6 +1293,22 @@ namespace CESSTacticsTestStaging
                     mutate = () =>
                     {
                         TacticsMod.Settings.reloadAbort = true;
+                        // A loaded rifle biocoded to someone else outranks the pistol on
+                        // DPS; the winner scan must skip it (SS's own usability rule) or
+                        // the abort dies at equip time in a reload-restart loop (T3-5).
+                        Pawn coder = abort.Map.mapPawns.AllPawnsSpawned
+                            .FirstOrDefault(x => x != abort && x.RaceProps.Humanlike);
+                        if (coder != null && Carried(abort, D("Gun_AssaultRifle")) is ThingWithComps
+                            && !abort.inventory.innerContainer.OfType<ThingWithComps>()
+                                .Any(t => t.TryGetComp<CompBiocodable>()?.Biocoded ?? false))
+                        {
+                            var coded = (ThingWithComps)ThingMaker.MakeThing(D("Gun_AssaultRifle"));
+                            coded.TryGetComp<CompAmmoUser>()?.ResetAmmoCount();
+                            coded.TryGetComp<CompBiocodable>()?.CodeFor(coder);
+                            abort.inventory.innerContainer.TryAdd(coded, false);
+                            abort.TryGetComp<CompInventory>().UpdateInventory();
+                            CompSidearmMemory.GetMemoryCompForPawn(abort)?.InformOfAddedSidearm(coded);
+                        }
                         // Inside the autopistol's CE range (16), NOT the historical 40:
                         // the feature scores the swap candidate at the threat's actual
                         // distance, and with the core patch's corrected range gate an
@@ -1140,6 +1362,98 @@ namespace CESSTacticsTestStaging
                         }),
                     }
                 },
+                new Phase
+                {
+                    label = "a-backpack-top-off-is-not-our-problem",
+                    deadlineTicks = 7000,
+                    // T3-1: reload-abort must ignore reloads of INVENTORY guns — here CE's
+                    // OWN undrafted top-off (priority 9.1, no safe-distance gate) with a
+                    // hostile visible in the old trigger band. Unfixed, F01 killed the
+                    // top-off and swapped the loaded primary every 30 ticks, forever.
+                    // Hostility response Ignore keeps the pawn from fleeing or firing, so
+                    // the only actors are CE's job giver and F01's gate.
+                    arrange = () =>
+                    {
+                        string step = "settings";
+                        try
+                        {
+                            TacticsMod.Settings.reloadAbort = true;
+                            step = "undraft";
+                            abort.drafter.Drafted = false;
+                            abort.playerSettings.hostilityResponse = HostilityResponseMode.Ignore;
+                            step = "find-pistol";
+                            ThingWithComps pi = Carried(abort, pistol);
+                            if (pi == null)
+                            {
+                                // An earlier phase's weapon switch can bulk-drop the pistol
+                                // to the floor (the biocoded rifle eats capacity). Recover.
+                                Thing ground = abort.Map.listerThings.ThingsOfDef(pistol).FirstOrDefault();
+                                pi = ground as ThingWithComps
+                                    ?? (ThingWithComps)ThingMaker.MakeThing(pistol);
+                                if (pi.Spawned)
+                                {
+                                    pi.DeSpawn();
+                                }
+                                abort.inventory.innerContainer.TryAdd(pi, false);
+                                abort.TryGetComp<CompInventory>().UpdateInventory();
+                                CompSidearmMemory.GetMemoryCompForPawn(abort)?.InformOfAddedSidearm(pi);
+                            }
+                            CompAmmoUser pu = pi.TryGetComp<CompAmmoUser>();
+                            pu.CurMagCount = 0;
+                            step = "loaded-sidearm";
+                            // The livelock needs a LOADED inventory winner: without one the
+                            // old code's scan came up empty and "kept reloading" by luck.
+                            if (Carried(abort, D("Gun_Revolver")) == null)
+                            {
+                                var rev = (ThingWithComps)ThingMaker.MakeThing(D("Gun_Revolver"));
+                                rev.TryGetComp<CompAmmoUser>()?.ResetAmmoCount();
+                                abort.inventory.innerContainer.TryAdd(rev, false);
+                                abort.TryGetComp<CompInventory>().UpdateInventory();
+                                CompSidearmMemory.GetMemoryCompForPawn(abort)?.InformOfAddedSidearm(rev);
+                            }
+                            step = "ammo";
+                            AmmoDef ammo = pu.SelectedAmmo ?? pu.CurrentAmmo;
+                            CompInventory inv = abort.TryGetComp<CompInventory>();
+                            if (ammo != null && inv.AmmoCountOfDef(ammo) < 7)
+                            {
+                                Thing stack = ThingMaker.MakeThing(ammo);
+                                stack.stackCount = 20;
+                                abort.inventory.innerContainer.TryAdd(stack, false);
+                                inv.UpdateInventory();
+                            }
+                            step = "park";
+                            ParkRaiderAt(abort, 20); // inside the rifle's range: the OLD trigger band
+                        }
+                        catch (Exception e)
+                        {
+                            throw new Exception($"backpack-arrange step '{step}': {e.Message}", e);
+                        }
+                    },
+                    checks =
+                    {
+                        P("staged-undrafted-dry-with-threat", () =>
+                        {
+                            CompAmmoUser pu = Carried(abort, pistol).TryGetComp<CompAmmoUser>();
+                            Pawn r = Raider();
+                            float dist = r?.Position.DistanceTo(abort.Position) ?? -1f;
+                            CompAmmoUser rv = Carried(abort, D("Gun_Revolver"))?.TryGetComp<CompAmmoUser>();
+                            return (!abort.Drafted && pu.CurMagCount == 0 && rv != null && rv.CurMagCount > 0
+                                    && r != null && !r.Downed && dist > 13f && dist < 45f,
+                                $"drafted={abort.Drafted} mag={pu.CurMagCount} revolverMag={rv?.CurMagCount} dist={dist:F0}");
+                        }),
+                        N("primary-never-swaps", () =>
+                        {
+                            ThingDef primary = abort.equipment?.Primary?.def;
+                            return (primary == rifle, $"primary={primary?.defName ?? "none"}");
+                        }),
+                        C("top-off-completes-despite-the-threat", () =>
+                        {
+                            CompAmmoUser pu = Carried(abort, pistol).TryGetComp<CompAmmoUser>();
+                            return (pu.CurMagCount == pu.MagSize,
+                                $"mag={pu.CurMagCount}/{pu.MagSize} job={abort.CurJobDef?.defName}");
+                        }),
+                    }
+                },
             };
         }
 
@@ -1148,6 +1462,8 @@ namespace CESSTacticsTestStaging
         private List<Phase> BuildTact2()
         {
             Pawn forcy = Colonist("Forcy");
+            ThingDef midRefillPrimary = null;
+            string midRefillJobInfo = "";
             ThingDef revolver = D("Gun_Revolver");
             ThingDef pistol = D("Gun_Autopistol");
 
@@ -1256,6 +1572,175 @@ namespace CESSTacticsTestStaging
                             return (primary == revolver, $"primary={primary?.defName ?? "none"} (forced resumes when ammo exists)");
                         }),
                         C("forced-flag-intact-throughout", () => ForcedStill()),
+                    }
+                },
+                new Phase
+                {
+                    label = "cqc-draws-the-knife-past-a-dry-forced-gun",
+                    deadlineTicks = 6000,
+                    // T3-6: SS's melee-attacked reflex checks the forced flag one call
+                    // ABOVE everything the fall-through used to hide — a pawn holding a
+                    // truly-dry forced gun who got stabbed never drew a knife. This
+                    // phase drives the REAL entry point: an adjacent raider swings, doCQC
+                    // fires, and the extended hide lets the knife come out. The forced
+                    // flag itself must survive untouched.
+                    arrange = () =>
+                    {
+                        TacticsMod.Settings.forcedDryFallthrough = true;
+                        ForceDryRevolver();
+                        // TRULY dry: the ammo-back phase leaves two magazines of .44 in the
+                        // pack, and spares mean "not dry" — strip them so the reflex faces
+                        // the state this phase is about.
+                        CompAmmoUser dryUser = Carried(forcy, revolver).TryGetComp<CompAmmoUser>();
+                        var calibers = dryUser.Props?.ammoSet?.ammoTypes?.Select(l => (ThingDef)l.ammo).ToList();
+                        if (calibers != null)
+                        {
+                            foreach (Thing t in forcy.inventory.innerContainer
+                                .Where(t => calibers.Contains(t.def)).ToList())
+                            {
+                                t.Destroy(DestroyMode.Vanish);
+                            }
+                            forcy.TryGetComp<CompInventory>().UpdateInventory();
+                        }
+                        // back onto the dry forced revolver so the reflex is what acts
+                        ThingWithComps rev = Carried(forcy, revolver);
+                        if (forcy.equipment?.Primary != rev)
+                        {
+                            forcy.TryGetComp<CompInventory>().TrySwitchToWeapon(rev);
+                        }
+                        if (Carried(forcy, D("MeleeWeapon_Knife")) == null)
+                        {
+                            var knife = (ThingWithComps)ThingMaker.MakeThing(D("MeleeWeapon_Knife"), D("Steel"));
+                            forcy.inventory.innerContainer.TryAdd(knife, false);
+                            forcy.TryGetComp<CompInventory>().UpdateInventory();
+                            CompSidearmMemory.GetMemoryCompForPawn(forcy)?.InformOfAddedSidearm(knife);
+                        }
+                        PeteTimesSix.SimpleSidearms.SimpleSidearms.Settings.CQCAutoSwitch = true;
+                        Pawn raider = Raider() ?? SpawnThreat(forcy.Map);
+                        ParkPawnNear(forcy, raider, 2);
+                        ForceMeleeAttack(raider, forcy);
+                    },
+                    // The map has other colonists; a free raider re-targets, walks off
+                    // (observed at 70 tiles), or loses the swing race to the deadline
+                    // (~50% of isolated runs). Drive the swing THROUGH THE REAL VERB
+                    // ourselves: TryMeleeAttack goes verb → TryCastShot → the core
+                    // patch's P06 re-attach → doCQC — the exact in-game chain, minus
+                    // the AI's mood.
+                    poll = () =>
+                    {
+                        Pawn raider = Raider();
+                        if (raider == null || forcy.equipment?.Primary?.def == D("MeleeWeapon_Knife"))
+                        {
+                            return;
+                        }
+                        if (raider.Position.DistanceTo(forcy.Position) > 2f)
+                        {
+                            ParkPawnNear(forcy, raider, 1);
+                        }
+                        raider.meleeVerbs.TryMeleeAttack(forcy, null, surpriseAttack: false);
+                    },
+                    checks =
+                    {
+                        P("forced-dry-and-attacker-adjacent", () =>
+                        {
+                            var forced = CompSidearmMemory.GetMemoryCompForPawn(forcy).ForcedWeapon;
+                            Pawn r = Raider();
+                            float dist = r?.Position.DistanceTo(forcy.Position) ?? -1f;
+                            return (forced?.thing == revolver && forcy.equipment?.Primary?.def == revolver
+                                    && Carried(forcy, D("MeleeWeapon_Knife")) != null && r != null && dist < 8f,
+                                $"forced={forced?.thing?.defName} primary={forcy.equipment?.Primary?.def?.defName} dist={dist:F0}");
+                        }),
+                        C("cqc-forensics", () =>
+                        {
+                            Pawn r = Raider();
+                            float dist = r?.Position.DistanceTo(forcy.Position) ?? -1f;
+                            var forced = CompSidearmMemory.GetMemoryCompForPawn(forcy).ForcedWeapon;
+                            CompAmmoUser ru = Carried(forcy, revolver)?.TryGetComp<CompAmmoUser>();
+                            return (true, $"raiderJob={r?.CurJobDef?.defName} dist={dist:F0} forcyHp={forcy.health.summaryHealth.SummaryHealthPercent:F2} "
+                                + $"forced={forced?.thing?.defName ?? "null"} revMag={ru?.CurMagCount} revHasAmmo={ru?.HasAmmo} "
+                                + $"cqcOn={PeteTimesSix.SimpleSidearms.SimpleSidearms.Settings.CQCAutoSwitch}");
+                        }, informational: true),
+                        C("knife-drawn-on-the-swing", () =>
+                        {
+                            ThingDef primary = forcy.equipment?.Primary?.def;
+                            string carried = string.Join(",", forcy.GetCarriedWeapons(true, true).Select(w => w.def.defName));
+                            return (primary == D("MeleeWeapon_Knife"), $"primary={primary?.defName ?? "none"} carried=[{carried}]");
+                        }),
+                        C("forced-flag-still-set", () => ForcedStill()),
+                    }
+                },
+                new Phase
+                {
+                    label = "mid-refill-the-forced-branch-waits",
+                    deadlineTicks = 4000,
+                    // T3-11: while the forced gun's refill job is literally in flight,
+                    // backpack ammo must NOT make it look "not dry" — the forced branch
+                    // used to re-equip it at 0 rounds and kill its own refill. All
+                    // synchronous: stage, start the refill, poke the preference pass,
+                    // observe in the same call.
+                    arrange = () =>
+                    {
+                        TacticsMod.Settings.forcedDryFallthrough = true;
+                        CompSidearmMemory mem6 = CompSidearmMemory.GetMemoryCompForPawn(forcy);
+                        if (mem6 != null)
+                        {
+                            // SS's DefaultRanged branch re-equips a preferred gun with no dry
+                            // check of its own — that is SS's normal preference behavior, not
+                            // the forced branch this phase pins. Clear it for isolation.
+                            mem6.DefaultRangedWeapon = null;
+                        }
+                        // The CQC phase's distress swap throws the revolver on the GROUND —
+                        // pick it back up (or mint a fresh one) so this phase stands alone
+                        // sequenced as well as isolated.
+                        if (Carried(forcy, revolver) == null)
+                        {
+                            Thing ground = forcy.Map.listerThings.ThingsOfDef(revolver).FirstOrDefault();
+                            ThingWithComps rec = ground as ThingWithComps
+                                ?? (ThingWithComps)ThingMaker.MakeThing(revolver, D("Steel"));
+                            if (rec.Spawned)
+                            {
+                                rec.DeSpawn();
+                            }
+                            forcy.inventory.innerContainer.TryAdd(rec, false);
+                            forcy.TryGetComp<CompInventory>().UpdateInventory();
+                            CompSidearmMemory.GetMemoryCompForPawn(forcy)?.InformOfAddedSidearm(rec);
+                        }
+                        ForceDryRevolver();
+                        // fall through to the pistol first
+                        CallEquip();
+                        // ammo arrives; the refill starts (a reload job for the INVENTORY revolver)
+                        ThingWithComps rev = Carried(forcy, revolver);
+                        CompAmmoUser user = rev.TryGetComp<CompAmmoUser>();
+                        AmmoDef ammo = user.SelectedAmmo ?? user.CurrentAmmo;
+                        Thing stack = ThingMaker.MakeThing(ammo);
+                        stack.stackCount = user.MagSize * 2;
+                        forcy.inventory.innerContainer.TryAdd(stack, false);
+                        forcy.TryGetComp<CompInventory>().UpdateInventory();
+                        Job job = user.TryMakeReloadJob();
+                        if (job != null)
+                        {
+                            forcy.jobs.StartJob(job, JobCondition.InterruptForced);
+                        }
+                        midRefillJobInfo = $"jobMade={job != null} curJob={forcy.CurJobDef?.defName} "
+                            + $"targetB={(forcy.CurJob?.targetB.Thing as ThingWithComps)?.def?.defName} selAmmo={user.SelectedAmmo?.defName}";
+                        // A preference event lands mid-job — the doCQC shape: the MELEE
+                        // override, which the core patch's P05 guard deliberately lets
+                        // through while a reload runs (a plain Combat pass is blocked, and
+                        // pinned P05 rather than this fix in the first version). The
+                        // forced branch runs before the mode split either way.
+                        WeaponAssingment.equipBestWeaponFromInventoryByPreference(
+                            forcy, PeteTimesSix.SimpleSidearms.Utilities.Enums.DroppingModeEnum.InDistress,
+                            PeteTimesSix.SimpleSidearms.Utilities.Enums.PrimaryWeaponMode.Melee, null);
+                        midRefillPrimary = forcy.equipment?.Primary?.def;
+                    },
+                    checks =
+                    {
+                        C("refill-forensics", () => (true, midRefillJobInfo), informational: true),
+                        P("refill-actually-in-flight", () =>
+                            (midRefillPrimary != null, $"captured={midRefillPrimary?.defName ?? "null"}")),
+                        C("empty-forced-gun-not-re-equipped", () =>
+                            (midRefillPrimary != revolver,
+                             $"primaryAtPreferencePass={midRefillPrimary?.defName ?? "none"} (must not be the 0-round forced gun)")),
                     }
                 },
             };

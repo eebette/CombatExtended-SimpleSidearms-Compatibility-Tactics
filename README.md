@@ -4,7 +4,12 @@
 ![CE + Simple Sidearms Compatibility Suite](Media/Badge_Suite.png)
 ![CE + Simple Sidearms Tactics Module](Media/Badge_Tactics.png)
 
-**Status: ALL FIVE features implemented and machine-verified 2026-08-18
+**Status (2026-09-01): seven features, three review rounds (T1 doctrine,
+T2 CE-true scoring, T3 adversarial) — 30 phases green sequenced + isolated,
+every fix A/B-proven, every headline behavior now pinned through the REAL
+in-game entry points.** Original scaffold status below for history.
+
+**Old status: ALL FIVE features implemented and machine-verified 2026-08-18
 (15/15 automated phases green — see TESTPLAN.md). Remaining: owner feel-testing
 + the suite release train.** This README is the
 project brief; an agent picking this up cold should work from it plus the
