@@ -3,6 +3,7 @@ using CombatExtended;
 using PeteTimesSix.SimpleSidearms;
 using PeteTimesSix.SimpleSidearms.Utilities;
 using RimWorld;
+using SimpleSidearms.rimworld;
 using Verse;
 using Verse.AI;
 using static PeteTimesSix.SimpleSidearms.Utilities.Enums;
@@ -40,11 +41,16 @@ namespace CESSCompatTactics.Features
             {
                 return;
             }
-            Map map = Find.CurrentMap;
-            if (map == null)
+            // Every loaded map, not just the watched one — whether the feature
+            // protects a pawn must not depend on where the camera is (T3-10).
+            foreach (Map map in Find.Maps)
             {
-                return;
+                Tick(map);
             }
+        }
+
+        private static void Tick(Map map)
+        {
             foreach (Pawn pawn in map.mapPawns.FreeColonistsSpawned)
             {
                 if (pawn.CurJobDef != CE_JobDefOf.ReloadWeapon
@@ -69,6 +75,21 @@ namespace CESSCompatTactics.Features
 
         private static void TryAbort(Pawn pawn)
         {
+            // ONLY reloads of the gun in the pawn's hands. CE's undrafted top-offs and
+            // F07's drafted top-offs create ReloadWeapon jobs for INVENTORY guns while
+            // the primary is loaded and fine; aborting those swapped a working primary
+            // for nothing and livelocked against the think tree's re-issue (T3-1).
+            if (pawn.CurJob?.targetB.Thing != pawn.equipment?.Primary || pawn.equipment?.Primary == null)
+            {
+                return;
+            }
+            // A forced weapon mid-reload stays put: every SS auto-swap respects the
+            // player's forced flag, and this abort is no exception (T3-5).
+            if (CompSidearmMemory.GetMemoryCompForPawn(pawn, fillExistingIfCreating: false)
+                    ?.IsCurrentWeaponForced(alsoCountPreferredOrDefault: false) ?? false)
+            {
+                return;
+            }
             float maxRange = MaxCarriedRange(pawn);
             if (maxRange <= 0f)
             {
@@ -99,6 +120,14 @@ namespace CESSCompatTactics.Features
                     || GettersFilters.isManualUse(weapon)
                     || GettersFilters.isDangerousWeapon(weapon)
                     || GettersFilters.isEMPWeapon(weapon))
+                {
+                    continue;
+                }
+                // SS's own usability rule (biocode, bladelink bond, Ideology role),
+                // honoring the player's allow-blocked setting — filtered at candidacy,
+                // never discovered at equip time after the reload is already dead (T3-5).
+                if (!PeteTimesSix.SimpleSidearms.SimpleSidearms.Settings.AllowBlockedWeaponUse
+                    && !StatCalculator.canUseSidearmInstance(weapon, pawn, out _))
                 {
                     continue;
                 }

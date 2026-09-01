@@ -48,6 +48,51 @@ namespace CESSCompatTactics.Features
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static void PrefixInner(Pawn pawn, ref (CompSidearmMemory memory, ThingDefStuffDefPair? forced, ThingDefStuffDefPair? forcedDrafted)? __state)
         {
+            HideDryForcedFlags(pawn, ref __state);
+        }
+
+        // A FINALIZER, not a postfix: postfixes are skipped when the original (or a
+        // later prefix) throws, and the state being restored here is the PLAYER'S
+        // forced-weapon setting — hidden for the duration of one call under the
+        // "bypass, never clear" guard. A throw leaving it nulled would be this
+        // feature destroying the exact intent it exists to respect.
+        [HarmonyFinalizer]
+        public static void Finalizer((CompSidearmMemory memory, ThingDefStuffDefPair? forced, ThingDefStuffDefPair? forcedDrafted)? __state)
+        {
+            RestoreForcedFlags(__state);
+        }
+
+        /// <summary>Empty magazine AND no compatible ammo anywhere on the pawn.
+        /// One refinement (T3-11): while a reload job for this very gun is in
+        /// flight, backpack ammo does NOT count as "not dry" — the magazine is
+        /// still at zero, and letting the forced branch re-equip it mid-refill
+        /// killed the refill and put an empty gun in the pawn's hands. The forced
+        /// weapon resumes the moment the refill lands.</summary>
+        // (see also ForcedWeaponLesson_Patch below)
+        internal static bool IsTrulyDry(Pawn pawn, ThingDefStuffDefPair pair)
+        {
+            ThingWithComps carried = pawn.GetCarriedWeapons(includeEquipped: true, includeTools: true)
+                .FirstOrDefault(w => w.toThingDefStuffDefPair() == pair);
+            if (carried == null)
+            {
+                return false; // not carried — SS's own logic handles that case
+            }
+            CompAmmoUser user = carried.TryGetComp<CompAmmoUser>();
+            if (user == null || !user.UseAmmo)
+            {
+                return false; // no CE ammo concept — can never be dry
+            }
+            bool magEmpty = !user.HasMagazine || user.CurMagCount <= 0;
+            bool refillInFlight = pawn.CurJobDef == CE_JobDefOf.ReloadWeapon
+                                  && pawn.CurJob?.targetB.Thing == carried;
+            return magEmpty && (!user.HasAmmo || refillInFlight);
+        }
+
+        /// <summary>Shared hide step for both entry points: stash and null the
+        /// truly-dry forced flags; the finalizer restores from __state.</summary>
+        internal static void HideDryForcedFlags(Pawn pawn,
+            ref (CompSidearmMemory memory, ThingDefStuffDefPair? forced, ThingDefStuffDefPair? forcedDrafted)? __state)
+        {
             if (!TacticsMod.Settings.forcedDryFallthrough || pawn == null)
             {
                 return;
@@ -76,13 +121,8 @@ namespace CESSCompatTactics.Features
             }
         }
 
-        // A FINALIZER, not a postfix: postfixes are skipped when the original (or a
-        // later prefix) throws, and the state being restored here is the PLAYER'S
-        // forced-weapon setting — hidden for the duration of one call under the
-        // "bypass, never clear" guard. A throw leaving it nulled would be this
-        // feature destroying the exact intent it exists to respect.
-        [HarmonyFinalizer]
-        public static void Finalizer((CompSidearmMemory memory, ThingDefStuffDefPair? forced, ThingDefStuffDefPair? forcedDrafted)? __state)
+        internal static void RestoreForcedFlags(
+            (CompSidearmMemory memory, ThingDefStuffDefPair? forced, ThingDefStuffDefPair? forcedDrafted)? __state)
         {
             if (__state == null)
             {
@@ -98,24 +138,43 @@ namespace CESSCompatTactics.Features
                 memory.ForcedWeaponWhileDrafted = forcedDrafted;
             }
         }
+    }
 
-        /// <summary>Empty magazine AND no compatible ammo anywhere on the pawn.</summary>
-        // (see also ForcedWeaponLesson_Patch below)
-        private static bool IsTrulyDry(Pawn pawn, ThingDefStuffDefPair pair)
+    /// <summary>
+    /// T3-6: the melee-attacked reflex (doCQC → tryCQCWeaponSwapToMelee) checks
+    /// "is the current weapon forced?" INSIDE SS, one call above everything the
+    /// class above hides — so the fall-through never covered the one moment the
+    /// pawn is being stabbed. Same hide-and-always-restore discipline on that
+    /// entry point gives the toggle full coverage: a truly-dry forced gun stops
+    /// blocking the knife draw, and the flags come back untouched either way.
+    /// </summary>
+    [HarmonyPatch(typeof(WeaponAssingment), nameof(WeaponAssingment.tryCQCWeaponSwapToMelee),
+                  new[] { typeof(Pawn), typeof(Pawn), typeof(DroppingModeEnum) })]
+    public static class ForcedDryCqc_Patch
+    {
+        public static bool Prepare() => PatchGuard.Require(typeof(WeaponAssingment), "tryCQCWeaponSwapToMelee",
+            new[] { typeof(Pawn), typeof(Pawn), typeof(DroppingModeEnum) },
+            "forced-dry fall-through will not cover the melee-attacked reflex.");
+
+        [HarmonyPrefix]
+        public static void Prefix(Pawn pawn, out (CompSidearmMemory memory, ThingDefStuffDefPair? forced, ThingDefStuffDefPair? forcedDrafted)? __state)
         {
-            ThingWithComps carried = pawn.GetCarriedWeapons(includeEquipped: true, includeTools: true)
-                .FirstOrDefault(w => w.toThingDefStuffDefPair() == pair);
-            if (carried == null)
+            __state = null;
+            try
             {
-                return false; // not carried — SS's own logic handles that case
+                ForcedDryFallthrough_Patch.HideDryForcedFlags(pawn, ref __state);
             }
-            CompAmmoUser user = carried.TryGetComp<CompAmmoUser>();
-            if (user == null || !user.UseAmmo)
+            catch (System.Exception e)
             {
-                return false; // no CE ammo concept — can never be dry
+                Log.ErrorOnce(PatchGuard.LogPrefix + "Forced-dry CQC check failed; the forced weapon is "
+                              + "honored literally. " + e, 0x5441430C);
             }
-            bool magEmpty = !user.HasMagazine || user.CurMagCount <= 0;
-            return magEmpty && !user.HasAmmo;
+        }
+
+        [HarmonyFinalizer]
+        public static void Finalizer((CompSidearmMemory memory, ThingDefStuffDefPair? forced, ThingDefStuffDefPair? forcedDrafted)? __state)
+        {
+            ForcedDryFallthrough_Patch.RestoreForcedFlags(__state);
         }
     }
 

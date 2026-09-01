@@ -125,9 +125,17 @@ namespace CESSCompatTactics.Features
             if (RangedSelectionScope.Target != null
                 && records.All(r => r.adjusted <= 0f) && records.Any(r => r.raw > 0f))
             {
-                var bestRaw = records.MaxBy(r => r.raw);
-                __result = (bestRaw.weapon, bestRaw.raw, __result.averageSpeed);
-                deferred = true;
+                // Only guns that can actually fire: records include dry weapons at
+                // full paper score, and the compat patch's dry-pick correction (P03)
+                // has already run — resurrecting a dry gun here handed pawns an
+                // empty weapon against the hardest targets (T3-4).
+                var usable = records.Where(r => HasRounds(r.weapon) && r.raw > 0f).ToList();
+                if (usable.Count > 0)
+                {
+                    var bestRaw = usable.MaxBy(r => r.raw);
+                    __result = (bestRaw.weapon, bestRaw.raw, __result.averageSpeed);
+                    deferred = true;
+                }
             }
 
             if (!settings.ammoDepthTiebreak)
@@ -165,6 +173,13 @@ namespace CESSCompatTactics.Features
             }
         }
 
+        /// <summary>Same has-rounds rule the rest of the suite uses.</summary>
+        private static bool HasRounds(ThingWithComps weapon)
+        {
+            CompAmmoUser user = weapon.TryGetComp<CompAmmoUser>();
+            return user == null || !user.UseAmmo || user.HasAmmoOrMagazine;
+        }
+
         /// <summary>Rounds on hand: magazine + carried spares; non-CE weapons never
         /// run dry — effectively infinite depth.</summary>
         private static long AmmoDepth(ThingWithComps weapon)
@@ -185,6 +200,59 @@ namespace CESSCompatTactics.Features
                     .Sum(t => (long)t.stackCount);
             }
             return user.CurMagCount + spare;
+        }
+    }
+
+    /// <summary>
+    /// T3-3: SS's warmup auto-switch (trySwapToMoreAccurateRangedWeapon) scored the
+    /// CHALLENGER inside the selection scope (armor-adjusted, ≤ raw) but re-scored
+    /// the INCUMBENT after the scope closed (raw) — a rigged comparison the
+    /// challenger could essentially never win, so the feature could veto swaps but
+    /// never produce the AP-rifle draw it exists for. Opening the scope across the
+    /// whole caller makes line-378's incumbent score adjusted too: symmetric
+    /// comparison, SS's own anti-oscillation margin preserved. The nested
+    /// findBestRangedWeapon call stacks its own scope via __state as usual.
+    /// </summary>
+    [HarmonyPatch(typeof(WeaponAssingment), nameof(WeaponAssingment.trySwapToMoreAccurateRangedWeapon),
+                  new[] { typeof(Pawn), typeof(LocalTargetInfo), typeof(bool), typeof(bool), typeof(bool), typeof(bool) })]
+    public static class TrySwap_ScopePatch
+    {
+        public static bool Prepare() => PatchGuard.Require(typeof(WeaponAssingment), "trySwapToMoreAccurateRangedWeapon",
+            new[] { typeof(Pawn), typeof(LocalTargetInfo), typeof(bool), typeof(bool), typeof(bool), typeof(bool) },
+            "target-aware scoring will compare an adjusted challenger against a raw incumbent (swaps suppressed).");
+
+        [HarmonyPrefix]
+        public static void Prefix(LocalTargetInfo target,
+            out (Pawn prevTarget, List<(ThingWithComps weapon, float raw, float adjusted)> prevRecords)? __state)
+        {
+            __state = null;
+            try
+            {
+                Pawn targetPawn = target.Thing as Pawn;
+                if (!TacticsMod.Settings.targetAwareAmmoScoring || targetPawn == null)
+                {
+                    return;
+                }
+                __state = (RangedSelectionScope.Target, RangedSelectionScope.Records);
+                RangedSelectionScope.Target = targetPawn;
+                RangedSelectionScope.Records = new List<(ThingWithComps, float, float)>();
+            }
+            catch (Exception e)
+            {
+                Log.ErrorOnce(PatchGuard.LogPrefix + "Swap-comparison scope failed to open; the raw "
+                              + "comparison stands. " + e, 0x5441430D);
+            }
+        }
+
+        [HarmonyFinalizer]
+        public static void Finalizer(
+            (Pawn prevTarget, List<(ThingWithComps weapon, float raw, float adjusted)> prevRecords)? __state)
+        {
+            if (__state.HasValue)
+            {
+                RangedSelectionScope.Target = __state.Value.prevTarget;
+                RangedSelectionScope.Records = __state.Value.prevRecords;
+            }
         }
     }
 
