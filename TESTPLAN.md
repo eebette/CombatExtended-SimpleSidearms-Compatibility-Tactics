@@ -355,5 +355,11 @@ reverted; script pattern in the compat repo's TESTPLAN):
   session is running). The owner's Steam launches use Proton and are unaffected.
 - After any killed mid-load run, CHECK THE MOD LIST FIRST: RimWorld's crash
   guard silently resets the shared profile's ModsConfig.xml to Core-only.
+- A launch racing Steam's post-reboot startup trips the same crash-guard
+  modlist wipe. A reboot also clears /tmp — scratchpad A/B and validation
+  scripts die with it; anything needed across reboots belongs in the repo.
+- Confirm a background battery is DEAD before launching another
+  (pgrep run-tact/RimWorld): a lingering sweep shares SaveData and the log,
+  and every interleaved result on both sides is garbage.
 
 Manual residue: feel-testing the abort cadence in real combat.
