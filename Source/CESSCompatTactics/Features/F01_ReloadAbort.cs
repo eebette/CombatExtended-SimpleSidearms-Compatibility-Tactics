@@ -24,8 +24,16 @@ namespace CESSCompatTactics.Features
     /// 30 ticks over the (few) pawns currently reloading, on every loaded map.
     /// Target provenance per the brief: vanilla AttackTargetFinder.BestAttackTarget
     /// supplies the target, and its non-null result IS the "threatened" trigger.
-    /// GUARDS: player-forced reload jobs and player-forced weapons are untouchable.
-    /// The abandoned reload is left to CE's own idle reload flow.
+    /// GUARDS: player-ORDERED reloads (the reload gizmo) and player-forced weapons
+    /// are untouchable. CE stamps job.playerForced=true on EVERY reload its
+    /// TryStartReload issues — the gizmo AND the automatic ran-dry reload that
+    /// fires the instant a magazine empties mid-attack (T4-2: gating on the flag
+    /// alone made the abort dead in its flagship scenario). The gizmo's one
+    /// distinct entry point, CompAmmoUser.SyncedTryStartReload, is therefore
+    /// tagged by the marker patch below; a player-forced reload with no fresh
+    /// tag is CE's automatic one and is fair game. If the marker cannot install
+    /// (upstream drift), EVERY player-forced reload stays untouchable — the
+    /// conservative direction. The abandoned reload is left to CE's own flow.
     ///
     /// SELECTION IS SS'S, NOT OURS (convergence C3): the winner comes from SS's own
     /// findBestRangedWeapon — its full filter chain (biocode, VFE shields,
@@ -69,7 +77,7 @@ namespace CESSCompatTactics.Features
             foreach (Pawn pawn in map.mapPawns.FreeColonistsSpawned)
             {
                 if (pawn.CurJobDef != CE_JobDefOf.ReloadWeapon
-                    || pawn.CurJob.playerForced
+                    || IsPlayerOrderedReload(pawn)
                     || pawn.Downed || pawn.InMentalState
                     || !pawn.IsValidSidearmsCarrierRightNow())
                 {
@@ -152,6 +160,23 @@ namespace CESSCompatTactics.Features
             WeaponAssingment.equipSpecificWeaponFromInventory(pawn, winner, dropCurrent: false, intentionalDrop: false);
         }
 
+        /// <summary>See the header: playerForced alone cannot separate the gizmo
+        /// from CE's ran-dry auto-reload — only a marker-tagged job is the
+        /// player's. No marker installed → every forced job is (conservatively)
+        /// the player's.</summary>
+        private static bool IsPlayerOrderedReload(Pawn pawn)
+        {
+            if (!pawn.CurJob.playerForced)
+            {
+                return false; // CE's lull top-offs (JobGiver_CheckReload) land here
+            }
+            if (!PlayerReloadMarker.Installed)
+            {
+                return true;
+            }
+            return PlayerReloadMarker.WasPlayerOrdered(pawn, pawn.CurJob.startTick);
+        }
+
         internal static bool LoadedNow(ThingWithComps weapon)
         {
             CompAmmoUser user = weapon.TryGetComp<CompAmmoUser>();
@@ -183,6 +208,69 @@ namespace CESSCompatTactics.Features
                 }
             }
             return max;
+        }
+    }
+
+    /// <summary>
+    /// The reload GIZMO's fingerprint: CompAmmoUser.SyncedTryStartReload is the one
+    /// entry only the player's command reaches (CE's automatic ran-dry reload calls
+    /// TryStartReload directly). The prefix stamps the wielder and tick; the reload
+    /// job starts synchronously inside the same call, so its startTick equals the
+    /// stamp — that equality IS "the player ordered this one" (T4-2). Multiplayer's
+    /// sync layer defers the inner call, but this module targets single-player,
+    /// where the path is synchronous.
+    /// </summary>
+    [HarmonyPatch(typeof(CompAmmoUser), "SyncedTryStartReload", new Type[0])]
+    public static class CompAmmoUser_SyncedTryStartReload_Patch
+    {
+        public static bool Prepare()
+        {
+            PlayerReloadMarker.Installed = PatchGuard.Require(typeof(CompAmmoUser), "SyncedTryStartReload",
+                new Type[0],
+                "the reload gizmo cannot be told apart from CE's automatic ran-dry reload, so "
+                + "reload-abort will leave EVERY player-forced reload alone (lull top-offs only).");
+            return PlayerReloadMarker.Installed;
+        }
+
+        [HarmonyPrefix]
+        public static void Prefix(CompAmmoUser __instance)
+        {
+            try
+            {
+                Pawn wielder = __instance?.Wielder;
+                if (wielder != null)
+                {
+                    PlayerReloadMarker.Stamp(wielder);
+                }
+            }
+            catch (Exception e)
+            {
+                Log.ErrorOnce(PatchGuard.LogPrefix + "Reload-gizmo marker failed; player-forced "
+                              + "reloads stay untouchable this session. " + e, 0x5441430F);
+                PlayerReloadMarker.Installed = false;
+            }
+        }
+    }
+
+    internal static class PlayerReloadMarker
+    {
+        internal static bool Installed;
+        private static readonly Dictionary<Pawn, int> stamps = new Dictionary<Pawn, int>();
+
+        internal static void Stamp(Pawn pawn)
+        {
+            // Opportunistic prune keeps the map at live-order size.
+            if (stamps.Count > 32)
+            {
+                int now = Find.TickManager.TicksGame;
+                stamps.RemoveAll(kv => now - kv.Value > 2500 || kv.Key.Destroyed);
+            }
+            stamps[pawn] = Find.TickManager.TicksGame;
+        }
+
+        internal static bool WasPlayerOrdered(Pawn pawn, int jobStartTick)
+        {
+            return stamps.TryGetValue(pawn, out int tick) && tick == jobStartTick;
         }
     }
 

@@ -179,7 +179,11 @@ namespace CESSCompatTactics.Features
             }
             if (best.weapon != __result.weapon)
             {
-                __result = (best.weapon, score(best), __result.averageSpeed);
+                // The RAW score ranks the tie window when deferred, but the RETURNED
+                // score must stay in the defer's currency: writing raw here re-armed
+                // C1's warmup livelock one branch below the fixed line whenever a
+                // deeper twin sat inside the window (T4-1).
+                __result = (best.weapon, deferred ? best.adjusted : score(best), __result.averageSpeed);
             }
         }
 

@@ -79,14 +79,29 @@ namespace CESSCompatTactics
             var harmony = new Harmony(HarmonyId);
             int applied = 0;
             var failures = new System.Collections.Generic.List<string>();
+            // Two of TargetScoring's upstream fingerprints live in its static ctor;
+            // without this they would verify at first combat scoring instead of at
+            // load, invisible to the census startup sweep (T4-5).
+            try
+            {
+                System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(
+                    typeof(Features.TargetScoring).TypeHandle);
+            }
+            catch (System.Exception e)
+            {
+                Log.Error($"{PatchGuard.LogPrefix}Target-scoring initialization failed at load: {e}");
+            }
             foreach (System.Type type in typeof(Bootstrap).Assembly.GetTypes())
             {
-                if (type.GetCustomAttributes(typeof(HarmonyPatch), inherit: false).Length == 0)
-                {
-                    continue;
-                }
                 try
                 {
+                    // The attribute probe sits INSIDE the try: decoding [HarmonyPatch]
+                    // resolves its typeof() args, and upstream type-level drift there
+                    // must cost one class, not abort the whole loop (T4-6).
+                    if (type.GetCustomAttributes(typeof(HarmonyPatch), inherit: false).Length == 0)
+                    {
+                        continue;
+                    }
                     // Patch() returns the patched methods; a Prepare-false class
                     // returns none and is SKIPPED, not applied (convergence note).
                     var patched = harmony.CreateClassProcessor(type).Patch();

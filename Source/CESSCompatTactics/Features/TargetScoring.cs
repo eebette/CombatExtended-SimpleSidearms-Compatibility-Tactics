@@ -273,13 +273,17 @@ namespace CESSCompatTactics.Features
         private static float FallbackSharp(DamageDef def, float dmg, float penSharp, float penBlunt,
                                            float sharpArmor, float bluntArmor)
         {
-            if (penSharp <= 0f)
-            {
-                return dmg;
-            }
+            // CE's "penAmount==0 passes whole" case is BLUNT-only: for sharp, the
+            // deflect verdict (armor > pen) is checked FIRST, so zero-pen sharp vs
+            // any armor fully deflects — the delegate path does this natively, and
+            // the fallback must match it (T4-3).
             if (penSharp > sharpArmor)
             {
                 return dmg * FallbackPasses(penSharp, sharpArmor);
+            }
+            if (sharpArmor <= 0f)
+            {
+                return dmg; // zero pen vs zero armor: nothing to deflect off
             }
             float deflected = Mathf.Pow(penBlunt * 10000f, 1f / 3f) / 10f;
             return deflected * FallbackPasses(penBlunt, bluntArmor);
@@ -323,7 +327,13 @@ namespace CESSCompatTactics.Features
                 ulong hash = 14695981039346656037UL; // FNV-1a
                 foreach (var instruction in PatchProcessor.GetOriginalInstructions(mb))
                 {
-                    string token = instruction.opcode.Name + (instruction.operand?.ToString() ?? "");
+                    // Invariant formatting: float operands ToString by CurrentCulture,
+                    // and a co-loaded locale-setting mod would flip every hash into a
+                    // permanent false drift error (T4-4).
+                    string token = instruction.opcode.Name
+                        + (instruction.operand is IFormattable formattable
+                            ? formattable.ToString(null, System.Globalization.CultureInfo.InvariantCulture)
+                            : instruction.operand?.ToString() ?? "");
                     foreach (char c in token)
                     {
                         hash = (hash ^ c) * 1099511628211UL;
