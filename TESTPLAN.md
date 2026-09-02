@@ -36,6 +36,14 @@ tact3→TACT-3-tiebreak, tact4→TACT-4-ammo-target, tact5→TACT-5-melee-target
   each phase that needs a toggle enables it ITSELF (arrange or mutate), so
   isolated runs test what the label claims.
 
+## Green pass — 2026-09-02 (T4: confirmation round fixed and pinned)
+
+34 phases (28 behavioral + 6 census), sequenced AND isolated — full board
+green 2026-09-02 after the T4 confirmation round (section below) added
+`a-ran-dry-auto-reload-is-abortable` (tact1) and
+`abort-declines-vs-hopeless-armor` (tact4) and both HIGH A/B legs ran red.
+Census is now ≥12 patched methods (`SyncedTryStartReload` marker).
+
 ## Green pass — 2026-09-01 (T3: adversarial round fixed and pinned)
 
 32 phases (26 behavioral + 6 census), sequenced AND isolated — full board
@@ -289,6 +297,101 @@ re-pass on the seams the T3 fixes introduced. Both independently found C1.
   hopeless phase steps its target closer until a shot happens; tact6's
   raider must park outside the RIFLE's range or the drafted pawn's auto-fire
   refreshes the reload cooldown forever.
+
+## T4 confirmation round (2026-09-02, post-convergence adversarial re-pass)
+
+Two attackers (one fresh full-repo, one mechanical seam re-pass) over the
+committed convergence state, tasked with confirming the fix set had converged.
+It had not: two HIGHs, both introduced by the convergence fixes themselves and
+both hidden behind synthetic staging.
+
+- **T4-1 (High)**: the ammo-depth tiebreak's MOVE branch wrote `score(best)`
+  — which returns the RAW score when the all-hopeless defer is active — so a
+  deeper twin inside the tie window re-armed C1's raw-vs-zero warmup compare
+  one branch below C1's own fix. Consequence in play: a phantom same-def
+  INSTANCE swap that resets the attack job (one bounce, then depths invert —
+  a stutter, not C1's freeze; both features must be ON, defer + tiebreak).
+  Fix: the returned tuple stays in the defer's currency
+  (`deferred ? best.adjusted : score(best)`). Pinned inside
+  `warmup-vs-hopeless-armor-still-fires`: equipped rifle shallowed to 5
+  rounds + ONE full inventory twin (spares are a shared pool — only
+  magazines differentiate depth; the picked weapon among equal raws is the
+  first ENUMERATED, the primary — so the twin wins the depth tiebreak every
+  time), `defer-move-stays-adjusted` asserts the moved pick still scores ≈0,
+  and `no-phantom-swap-mid-warmup` (N) latches primary INSTANCE identity
+  from attack start to first shot.
+- **T4-2 (High)**: F01's player-respect gate read `job.playerForced` — but
+  CE's `TryStartReload` stamps `playerForced = true` on the ran-dry AUTO
+  reload too (both `Verb_ShootCE` call sites), so the abort skipped the
+  flagship scenario (mid-firefight ran-dry reload with a loaded sidearm) and
+  every suite pin passed because the tests staged reloads with a synthetic
+  `playerForced: false`. Only `JobGiver_CheckReload` lull top-offs leave the
+  flag false. Fix: a marker prefix on `SyncedTryStartReload` (the one entry
+  only the player's gizmo reaches — census 12) stamps wielder+tick;
+  `IsPlayerOrderedReload` = playerForced AND marker-stamped-this-job (job
+  start is synchronous inside the synced call, so startTick equality is the
+  join); no marker installed → conservative (every forced job is the
+  player's). Pinned by `player-forced-reload-untouchable` driving the REAL
+  gizmo entry via reflection and the new `a-ran-dry-auto-reload-is-abortable`
+  driving the REAL auto entry (`TryStartReload`), with the mutate snapshot
+  proving `job=ReloadWeapon forced=True` before the abort kills it.
+- **T4-3 (Low)**: the modeled FALLBACK deflected zero-pen sharp attacks
+  differently from CE (CE checks the sharp deflect verdict `armor > pen`
+  FIRST; "pen==0 passes whole" is blunt-only). Fallback-only path; aligned.
+- **T4-4 (Low)**: fingerprint operand tokens used culture-sensitive
+  ToString — a comma-decimal locale would shift every float operand and
+  permanently red the suite. Both copies (Tactics + compat's P07 guard) now
+  format via InvariantCulture; baked hashes unchanged on this machine.
+- **T4-5 (Low)**: TargetScoring's two fingerprints verified at first combat
+  use, not load — `RunClassConstructor` in the mod ctor moves the drift
+  signal to boot, where the census phase sees it.
+- **T4-6 (Low)**: Bootstrap decoded each class's HarmonyPatch attributes
+  OUTSIDE the per-class try — one upstream type-level drift crashed the
+  whole loop instead of costing one class. Probe moved inside.
+
+Staging lessons (T4's crop): the runner defers `mutate` until every
+precondition holds — a precondition asserting POST-mutate state deadlocks the
+phase invalid (assert arrange validity in P, capture mutate-time truth in a
+snapshot local, assert it in C); informationals do not evaluate before
+preconditions pass (ride diagnostics on the P's detail string); the disarmed
+raider's fists and a live 9%-hp blaster centipede both DOWN the subject
+across close-park phases — `Stun()` pins hostiles in place (Pawn.ThreatDisabled
+has no stun test, so a stunned pawn stays a valid AttackTargetFinder threat)
+with `HealInjuries()` + `FireAtWill=false` for determinism; `Carried()` order
+is churn-dependent and phase 2's biocoded twin is equippable by CE's
+`TrySwitchToWeapon` (biocode blocks SS selection, not direct equip) — pick
+instances by predicate (`UsableRifle`), never by enumeration position;
+`GetCarriedWeapons` walks inventory in REVERSED add order; weapon switches
+bulk-drop the pistol from an overfull pack (purge staging leftovers before
+switching); `TryStartReload` silently no-ops on non-equipped instances
+(IsEquippedGun) and returns null-job when the backpack has no compatible
+rounds — stage both; a feature-INTERSECTION bug needs BOTH toggles on in the
+pinning phase (T4-1 was invisible until `ammoDepthTiebreak` was enabled
+alongside the defer).
+
+Ops: a crash-guard "Recovered from incompatible or corrupted mods" wipes the
+TEST profile's `ModsConfig.xml` to Core (launch racing Steam startup) — the
+game then wedges at early boot with a 60-line Player.log; restore from
+`Config/ModsConfig.xml.known-good` (kept beside it) or the save's own
+`<modIds>`. `pgrep -f`/`pkill -f` self-match the wrapping shell's command
+line — guard game instances with `-x RimWorldLinux` only.
+
+## A/B — the T4 fix set (2026-09-02, both HIGH legs run and red)
+
+- **T4-1** (tiebreak currency): A-leg red twice over —
+  `no-phantom-swap-mid-warmup` latches the phantom instance swap
+  (`primary=...43661 staged=...38430`, same def, different thing) and
+  `a-shot-actually-fires` dies in Stance_Warmup. Three vacuous A-legs on the
+  way are the lesson above: a single twin = nothing to move (the picked
+  weapon IS the twin under includeEquipped:false), equal mags = equal depth
+  (shared spare pool), tiebreak setting off = MOVE unreachable.
+- **T4-2** (playerForced gate): A-leg red at
+  `a-ran-dry-auto-reload-is-abortable` (`primary=Gun_AssaultRifle` — abort
+  skipped, reload completed) with `player-forced-reload-untouchable` still
+  green — the marker separates the two entries, the flag alone cannot.
+- **T4-3..T4-6**: load-time machinery and fallback-only paths — covered by
+  the census phase (fingerprints now verify at boot; a mismatch reds the
+  suite) and by inspection against the CE decompile; no dedicated legs.
 
 ## A/B — the T3 fix set (2026-09-01, every leg run and red)
 

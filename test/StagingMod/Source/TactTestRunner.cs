@@ -263,9 +263,10 @@ namespace CESSTacticsTestStaging
                         // (symmetric swap comparison), findBestMeleeWeapon (all-hopeless defer),
                         // getMeleeDPSBiased (in-scope melee adjustment),
                         // JobGiver_CheckReload.DoReloadCheck (drafted sidearm top-off),
-                        // Extensions.GetCarriedWeapons (reload-abort's loaded-now scope).
-                        return (mine.Count >= 11,
-                            $"methods patched by eebette.CESimpleSidearmsCompat.Tactics={mine.Count} (want >= 11): "
+                        // Extensions.GetCarriedWeapons (reload-abort's loaded-now scope),
+                        // CompAmmoUser.SyncedTryStartReload (the reload gizmo's marker).
+                        return (mine.Count >= 12,
+                            $"methods patched by eebette.CESimpleSidearmsCompat.Tactics={mine.Count} (want >= 12): "
                             + string.Join(", ", mine.Select(m => m.DeclaringType?.Name + "." + m.Name).OrderBy(n => n)));
                     }),
                 }
@@ -645,6 +646,26 @@ namespace CESSTacticsTestStaging
             raider.Notify_Teleported();
         }
 
+        /// <summary>Pin a hostile in place: Pawn.ThreatDisabled has no stun test, so a
+        /// stunned pawn stays a valid AttackTargetFinder threat while unable to move,
+        /// melee, or fire for the duration.</summary>
+        private static void Stun(Pawn pawn, int ticks)
+        {
+            pawn?.stances?.stunner?.StunFor(ticks, null, addBattleLog: false, showMote: false);
+        }
+
+        /// <summary>Strip accumulated injuries/blood loss between phases — the disarmed
+        /// raider's fists add up across every close-park phase and eventually down the
+        /// subject mid-suite.</summary>
+        private static void HealInjuries(Pawn pawn)
+        {
+            foreach (Hediff h in pawn.health.hediffSet.hediffs
+                .Where(x => x is Hediff_Injury || x.def == HediffDefOf.BloodLoss).ToList())
+            {
+                pawn.health.RemoveHediff(h);
+            }
+        }
+
         /// <summary>Disarmed hostile — a valid AttackTargetFinder threat that can't
         /// meaningfully hurt or be quickly killed across phases.</summary>
         private static Pawn SpawnThreat(Map map)
@@ -896,6 +917,7 @@ namespace CESSTacticsTestStaging
             Pawn warmupScyther = null;
             int hopelessAdjustTick = 0;
             string hopelessStaging = "";
+            ThingWithComps hopelessRifleAtAttack = null;
 
             (ThingWithComps weapon, float dps, float averageSpeed) FindBest(Pawn target) =>
                 GettersFilters.findBestRangedWeapon(ammy, new LocalTargetInfo(target));
@@ -1182,9 +1204,16 @@ namespace CESSTacticsTestStaging
                     },
                     mutate = () =>
                     {
-                        string step = "recover-guns";
+                        string step = "settings";
                         try
                         {
+                            // T4-1 lives at the INTERSECTION of the two features: the
+                            // all-hopeless defer (targetAware) hands its pick to the
+                            // depth tiebreak (ammoDepthTiebreak) — with the tiebreak off,
+                            // the MOVE branch is unreachable and the pin is vacuous.
+                            TacticsMod.Settings.targetAwareAmmoScoring = true;
+                            TacticsMod.Settings.ammoDepthTiebreak = true;
+                            step = "recover-guns";
                             // The centipede's last in-flight burst can DOWN Ammy right as
                             // the previous phase latches — the rifle lands on the floor.
                             // Recover anything dropped, then re-arm.
@@ -1222,6 +1251,33 @@ namespace CESSTacticsTestStaging
                             {
                                 ammy.TryGetComp<CompInventory>().TrySwitchToWeapon(Carried(ammy, rifle));
                             }
+                            step = "twin";
+                            // T4-1's trigger, made deterministic: the picked weapon among
+                            // equal raw scores is the FIRST enumerated — the primary
+                            // (GetCarriedWeapons walks inventory in reversed add order, so
+                            // never bet on inventory position). Shallow the equipped
+                            // rifle to 5 rounds and stage ONE full twin: spares are a
+                            // shared pool, so the twin's magazine alone makes it strictly
+                            // deeper and the tiebreak MOVES the all-hopeless deferred
+                            // pick every time. Unfixed, that move leaks the twin's RAW
+                            // score past the defer; fixed, the adjusted currency (≈0)
+                            // survives the move. Staged AFTER the re-equip: a later
+                            // weapon switch would bulk-drop the twin from the pack.
+                            foreach (ThingWithComps extra in ammy.GetCarriedWeapons(true, true)
+                                .Where(w => w.def == rifle && w != ammy.equipment?.Primary).ToList())
+                            {
+                                extra.Destroy(DestroyMode.Vanish);
+                            }
+                            var deepTwin = (ThingWithComps)ThingMaker.MakeThing(rifle);
+                            deepTwin.TryGetComp<CompAmmoUser>()?.ResetAmmoCount();
+                            ammy.inventory.innerContainer.TryAdd(deepTwin, false);
+                            ammy.TryGetComp<CompInventory>().UpdateInventory();
+                            CompSidearmMemory.GetMemoryCompForPawn(ammy)?.InformOfAddedSidearm(deepTwin);
+                            CompAmmoUser primaryUser = ammy.equipment.Primary.TryGetComp<CompAmmoUser>();
+                            if (primaryUser != null && primaryUser.CurMagCount > 5)
+                            {
+                                primaryUser.CurMagCount = 5;
+                            }
                             step = "clear-scyther";
                             if (warmupScyther != null && !warmupScyther.Destroyed)
                             {
@@ -1229,6 +1285,7 @@ namespace CESSTacticsTestStaging
                             }
                             step = "park-centipede";
                             Pawn mech = Mech() ?? throw new InvalidOperationException("no downed centipede staged");
+                            hopelessRifleAtAttack = ammy.equipment.Primary;
                             step = "attack";
                             ammy.drafter.Drafted = true;
                             Job job = JobMaker.MakeJob(JobDefOf.AttackStatic, mech);
@@ -1282,11 +1339,145 @@ namespace CESSTacticsTestStaging
                                 + $"hp={(ammy.Dead ? 0f : ammy.health.summaryHealth.SummaryHealthPercent):F2} "
                                 + $"hostiles=[{string.Join(",", hostiles)}]");
                         }, informational: true),
+                        C("defer-move-stays-adjusted", () =>
+                        {
+                            // T4-1's direct pin: with two tied inventory twins the depth
+                            // tiebreak MOVES the deferred pick — the returned score must
+                            // stay in the defer's adjusted currency (≈0), never the raw.
+                            Pawn mech = Mech();
+                            if (mech == null)
+                            {
+                                return (false, "no mech");
+                            }
+                            var (w, dps, _) = FindBest(mech);
+                            var twins = ammy.GetCarriedWeapons(true, true)
+                                .Where(x => x.def == rifle && x != ammy.equipment?.Primary)
+                                .Select(x => $"{x.ThingID}:mag={x.TryGetComp<CompAmmoUser>()?.CurMagCount}");
+                            return (dps <= 0.001f,
+                                $"pick={w?.ThingID ?? "none"} dps={dps:F3} twins=[{string.Join(",", twins)}]");
+                        }),
+                        N("no-phantom-swap-mid-warmup", () =>
+                        {
+                            // T4-1: the deferred tiebreak MOVE must not leak a raw score —
+                            // leaked, trySwap crowns the same-def twin and the attack job
+                            // dies to an instance swap the player never asked for.
+                            bool stable = hopelessRifleAtAttack == null
+                                || ammy.equipment?.Primary == hopelessRifleAtAttack;
+                            return (stable, $"primary={ammy.equipment?.Primary?.ThingID ?? "none"} "
+                                + $"staged={hopelessRifleAtAttack?.ThingID ?? "unset"}");
+                        }),
                         C("a-shot-actually-fires", () =>
                         {
                             bool fired = ammy.stances?.curStance is Stance_Cooldown;
                             return (fired, $"stance={ammy.stances?.curStance?.GetType()?.Name} "
                                 + $"job={ammy.CurJobDef?.defName} primary={ammy.equipment?.Primary?.def?.defName}");
+                        }),
+                    }
+                },
+                new Phase
+                {
+                    label = "abort-declines-vs-hopeless-armor",
+                    deadlineTicks = 9000,
+                    // The abort's own stand-down (both T4 reviewers flagged it
+                    // unstaged): a loaded shotgun IN RANGE of the downed centipede is
+                    // a swap SS would offer, but every modeled score is zero — the
+                    // defer hands back an adjusted 0 and the abort must decline and
+                    // let CE's automatic ran-dry reload finish.
+                    arrange = () =>
+                    {
+                        TacticsMod.Settings.targetAwareAmmoScoring = true;
+                        TacticsMod.Settings.reloadAbort = true;
+                        // the warmup phase's T4-1 staging turns this on; this phase's
+                        // premise is the defer alone
+                        TacticsMod.Settings.ammoDepthTiebreak = false;
+                        // The warmup phases leave the centipede ALIVE at 9% (a downed mech
+                        // is no AttackTargetFinder threat — NeedThreat/NeedAutoTargetable —
+                        // so the abort would decline for the wrong reason). Alive at 12
+                        // cells it guns the subject down instead: heal, hold fire, and pin
+                        // the blaster with a stun that outlasts the phase.
+                        HealInjuries(ammy);
+                        // Drafted with fire held: an undrafted pawn re-runs SS's own
+                        // TARGETLESS preference pass after the reload completes and
+                        // legitimately swaps to the raw-better shotgun (isolated runs
+                        // load undrafted; sequenced inherited the warmup phase's draft).
+                        ammy.drafter.Drafted = true;
+                        ammy.drafter.FireAtWill = false;
+                        // The RIFLE in hand, dry, is the premise — isolated runs load the
+                        // save's shotgun equipped, and TryStartReload silently no-ops on
+                        // a non-equipped instance (IsEquippedGun). BEFORE the purge: with
+                        // the shotgun still primary, "non-primary rifles" is ALL of them.
+                        if (ammy.equipment?.Primary?.def != rifle && Carried(ammy, rifle) != null)
+                        {
+                            ammy.TryGetComp<CompInventory>().TrySwitchToWeapon(Carried(ammy, rifle));
+                        }
+                        // one rifle only — the twin phase's spare muddies Carried()
+                        foreach (var extra in ammy.GetCarriedWeapons(true, true)
+                            .Where(w => w.def == rifle && w != ammy.equipment?.Primary).ToList())
+                        {
+                            extra.Destroy(DestroyMode.Vanish);
+                        }
+                        ammy.TryGetComp<CompInventory>().UpdateInventory();
+                        CompAmmoUser su = Carried(ammy, shotgun)?.TryGetComp<CompAmmoUser>();
+                        su?.ResetAmmoCount();
+                        // The abort targets AttackTargetFinder's pick, not ours: isolated
+                        // runs load whatever hostiles the fresh save carries (a scyther is
+                        // a soft target the shotgun rightly WANTS — sequenced runs only
+                        // worked because earlier phases had already cleared it). Keep
+                        // exactly one hostile: the armor-hopeless centipede.
+                        Pawn mech = null;
+                        foreach (Pawn hostile in ammy.Map.mapPawns.AllPawnsSpawned
+                            .Where(p => p.HostileTo(Faction.OfPlayer)).ToList())
+                        {
+                            if (mech == null && hostile.def.defName == "Mech_CentipedeBlaster")
+                            {
+                                mech = hostile;
+                                continue;
+                            }
+                            hostile.Destroy(DestroyMode.Vanish);
+                        }
+                        if (mech == null)
+                        {
+                            mech = SpawnMech("Mech_CentipedeBlaster", ammy, 12);
+                        }
+                        ParkWithLOS(ammy, mech, 12); // inside the shotgun's range
+                        Stun(mech, 12000);
+                        ammy.mindState.lastAttackTargetTick = Find.TickManager.TicksGame - 60000;
+                    },
+                    mutate = () =>
+                    {
+                        // Primary, not Carried(): TryStartReload no-ops on inventory guns.
+                        CompAmmoUser ru = ammy.equipment.Primary.TryGetComp<CompAmmoUser>();
+                        ru.CurMagCount = 0;
+                        ru.TryStartReload(); // the auto entry — abortable by T4-2's rule
+                    },
+                    checks =
+                    {
+                        P("hopeless-swap-on-offer", () =>
+                        {
+                            CompAmmoUser su = Carried(ammy, shotgun)?.TryGetComp<CompAmmoUser>();
+                            Pawn mech = Mech();
+                            float dist = mech?.Position.DistanceTo(ammy.Position) ?? -1f;
+                            if ((Carried(ammy, rifle)?.TryGetComp<CompAmmoUser>()?.CurMagCount ?? 0) > 0)
+                            {
+                                return (true, "reload already completed");
+                            }
+                            return (su != null && su.CurMagCount > 0 && dist > 0f && dist < 16f,
+                                $"shotgunMag={su?.CurMagCount} mechDist={dist:F0}");
+                        }),
+                        N("primary-never-swaps", () =>
+                        {
+                            ThingDef primary = ammy.equipment?.Primary?.def;
+                            Pawn m = Mech();
+                            string extra = m == null ? "mech=none"
+                                : $"mech={m.def.defName}@{m.Position.DistanceTo(ammy.Position):F0} "
+                                  + $"downed={m.Downed} stunned={m.stances?.stunner?.Stunned} {Detail(m)}";
+                            return (primary == rifle, $"primary={primary?.defName ?? "none"} {extra}");
+                        }),
+                        C("reload-completes-despite-the-offer", () =>
+                        {
+                            CompAmmoUser ru = Carried(ammy, rifle)?.TryGetComp<CompAmmoUser>();
+                            return (ru != null && ru.CurMagCount == ru.MagSize,
+                                $"mag={ru?.CurMagCount}/{ru?.MagSize} job={ammy.CurJobDef?.defName}");
                         }),
                     }
                 },
@@ -1503,6 +1694,21 @@ namespace CESSTacticsTestStaging
             Pawn abort = Colonist("Abort");
             ThingDef rifle = D("Gun_AssaultRifle");
             ThingDef pistol = D("Gun_Autopistol");
+            string autoReloadSnapshot = "";
+
+            // Carried() order is churn-dependent and phase 2 stages a biocoded twin —
+            // equipping THAT makes later reload/abort pins run on a gun SS refuses to
+            // consider. Always pick a usable (non-coded) instance.
+            ThingWithComps UsableRifle()
+            {
+                ThingWithComps prim = abort.equipment?.Primary;
+                if (prim?.def == rifle && !(prim.TryGetComp<CompBiocodable>()?.Biocoded ?? false))
+                {
+                    return prim;
+                }
+                return abort.GetCarriedWeapons(true, true).FirstOrDefault(w => w.def == rifle
+                    && !(w.TryGetComp<CompBiocodable>()?.Biocoded ?? false));
+            }
 
             return new List<Phase>
             {
@@ -1594,20 +1800,32 @@ namespace CESSTacticsTestStaging
                     // The feature must be ON for this phase to test anything: isolated
                     // runs never see phase 2's enable, and with it off the reload
                     // completes for the wrong reason.
-                    arrange = () => { TacticsMod.Settings.reloadAbort = true; },
+                    arrange = () =>
+                    {
+                        TacticsMod.Settings.reloadAbort = true;
+                        // Close parks accumulate fist damage across phases; reset so a
+                        // late-suite pain-shock downing can't masquerade as a feature bug.
+                        HealInjuries(abort);
+                        abort.drafter.FireAtWill = false;
+                    },
                     mutate = () =>
                     {
-                        // Back onto the rifle, then a PLAYER-FORCED reload with the
-                        // threat still present — must complete despite the feature.
-                        ThingWithComps rifleThing = Carried(abort, rifle);
+                        // Back onto the rifle, then the REAL reload gizmo — CE stamps
+                        // playerForced on auto-reloads too, so the pin must go through
+                        // the one entry only the player reaches
+                        // (SyncedTryStartReload; T4-2), not a synthetic flag.
+                        ThingWithComps rifleThing = UsableRifle();
                         abort.TryGetComp<CompInventory>().TrySwitchToWeapon(rifleThing);
                         // Close park on purpose: a loaded pistol in range means the
-                        // unforced path WOULD abort-and-swap here, so the playerForced
-                        // gate is the only thing letting this reload finish. At the old
-                        // 40 tiles the phase passed vacuously — no in-range secondary,
-                        // nothing to guard against.
+                        // unmarked path WOULD abort-and-swap here, so the gizmo marker
+                        // is the only thing letting this reload finish. Stunned, so the
+                        // 10000-tick window can't end in a melee mauling.
                         ParkRaiderAt(abort, 12);
-                        StartReload(abort, playerForced: true);
+                        Stun(Raider(), 12000);
+                        CompAmmoUser ru = rifleThing.TryGetComp<CompAmmoUser>();
+                        ru.CurMagCount = 0;
+                        AccessTools.Method(typeof(CompAmmoUser), "SyncedTryStartReload")
+                            .Invoke(ru, null);
                     },
                     checks =
                     {
@@ -1617,6 +1835,112 @@ namespace CESSTacticsTestStaging
                             CompAmmoUser user = primary?.TryGetComp<CompAmmoUser>();
                             bool full = primary?.def == rifle && user != null && user.CurMagCount == user.MagSize;
                             return (full, $"primary={primary?.def?.defName} mag={user?.CurMagCount}/{user?.MagSize} job={abort.CurJobDef?.defName}");
+                        }),
+                    }
+                },
+                new Phase
+                {
+                    label = "a-ran-dry-auto-reload-is-abortable",
+                    deadlineTicks = 6000,
+                    // T4-2's flagship: CE's automatic reload when the magazine empties
+                    // mid-attack carries playerForced=true — the flag alone made the
+                    // abort skip it, and the suite's synthetic playerForced:false jobs
+                    // hid that for three review rounds. Drive the REAL auto entry
+                    // (TryStartReload directly — no gizmo marker) with a threat inside
+                    // the pistol's range: the abort must fire.
+                    arrange = () =>
+                    {
+                        TacticsMod.Settings.reloadAbort = true;
+                        HealInjuries(abort);
+                        // Drafted and holding fire: an undrafted pawn WANDERS once the
+                        // raider is stunned (GotoWander drifts the staged 12-cell
+                        // distance), and the phase needs the reload job, not a firefight.
+                        abort.drafter.Drafted = true;
+                        abort.drafter.FireAtWill = false;
+                        // Phase 2 staged a biocoded rifle twin and a dry decoy rifle:
+                        // Carried(rifle) can hand back either, and TryStartReload on a
+                        // non-equipped instance silently returns (IsEquippedGun). Equip
+                        // the usable instance and work with Primary from here on.
+                        ThingWithComps usable = UsableRifle();
+                        if (usable != null && abort.equipment?.Primary != usable)
+                        {
+                            abort.TryGetComp<CompInventory>().TrySwitchToWeapon(usable);
+                        }
+                        // The pistol must be a live swap target — and weapon switches
+                        // bulk-drop it to the floor when the staged rifles overfill the
+                        // pack (the backpack phase's standing lesson). Recover or remake.
+                        ThingWithComps pi = Carried(abort, pistol);
+                        if (pi == null)
+                        {
+                            Thing ground = abort.Map.listerThings.ThingsOfDef(pistol).FirstOrDefault();
+                            pi = ground as ThingWithComps
+                                ?? (ThingWithComps)ThingMaker.MakeThing(pistol);
+                            if (pi.Spawned)
+                            {
+                                pi.DeSpawn();
+                            }
+                            abort.inventory.innerContainer.TryAdd(pi, false);
+                            abort.TryGetComp<CompInventory>().UpdateInventory();
+                            CompSidearmMemory.GetMemoryCompForPawn(abort)?.InformOfAddedSidearm(pi);
+                        }
+                        pi.TryGetComp<CompAmmoUser>()?.ResetAmmoCount();
+                        // Phase 3's gizmo reload drained the backpack's rifle ammo; with
+                        // none left TryMakeReloadJob returns null and no reload ever runs.
+                        CompAmmoUser ru0 = abort.equipment?.Primary?.TryGetComp<CompAmmoUser>();
+                        AmmoDef rifleAmmo = ru0?.SelectedAmmo ?? ru0?.CurrentAmmo;
+                        CompInventory inv = abort.TryGetComp<CompInventory>();
+                        if (rifleAmmo != null && inv.AmmoCountOfDef(rifleAmmo) < ru0.MagSize)
+                        {
+                            Thing stack = ThingMaker.MakeThing(rifleAmmo);
+                            stack.stackCount = ru0.MagSize * 2;
+                            abort.inventory.innerContainer.TryAdd(stack, false);
+                            inv.UpdateInventory();
+                        }
+                        ParkRaiderAt(abort, 12);
+                        Stun(Raider(), 8000);
+                    },
+                    mutate = () =>
+                    {
+                        // Primary, not Carried(): TryStartReload no-ops on inventory guns.
+                        // StartJob is synchronous, so the snapshot right after the call is
+                        // the proof the REAL auto entry issued a playerForced reload —
+                        // the abort can kill the job between polls, so no poll may see it.
+                        CompAmmoUser ru = abort.equipment.Primary.TryGetComp<CompAmmoUser>();
+                        ru.CurMagCount = 0;
+                        ru.TryStartReload(); // the auto path: playerForced=true, NO marker
+                        autoReloadSnapshot = $"job={abort.CurJobDef?.defName} "
+                            + $"forced={abort.CurJob?.playerForced} hasAmmo={ru.HasAmmo} "
+                            + $"primary={abort.equipment?.Primary?.def?.defName}";
+                        Log.Message("[TactTest] auto-reload mutate: " + autoReloadSnapshot);
+                    },
+                    checks =
+                    {
+                        // Preconditions gate the mutate (runner defers it until they hold),
+                        // so they may only assert ARRANGE state — the reload itself is
+                        // asserted from the mutate snapshot below.
+                        P("staged-usable-rifle-and-loaded-swap", () =>
+                        {
+                            ThingWithComps prim = abort.equipment?.Primary;
+                            bool primOk = prim?.def == rifle
+                                && !(prim.TryGetComp<CompBiocodable>()?.Biocoded ?? false);
+                            CompAmmoUser pu = Carried(abort, pistol)?.TryGetComp<CompAmmoUser>();
+                            CompAmmoUser ru = prim?.TryGetComp<CompAmmoUser>();
+                            AmmoDef ad = ru?.SelectedAmmo ?? ru?.CurrentAmmo;
+                            int stock = ad != null ? abort.TryGetComp<CompInventory>().AmmoCountOfDef(ad) : -1;
+                            Pawn r = Raider();
+                            float dist = r?.Position.DistanceTo(abort.Position) ?? -1f;
+                            return (primOk && pu != null && pu.CurMagCount > 0 && stock > 0
+                                    && r != null && !r.Downed && dist > 0f && dist < 16f,
+                                $"primOk={primOk} pistolMag={pu?.CurMagCount} stock={stock} raiderDist={dist:F0}");
+                        }),
+                        C("auto-reload-started-player-forced", () =>
+                            (autoReloadSnapshot.Contains("job=ReloadWeapon")
+                                && autoReloadSnapshot.Contains("forced=True"),
+                             autoReloadSnapshot)),
+                        C("abort-fires-on-the-auto-reload", () =>
+                        {
+                            ThingDef primary = abort.equipment?.Primary?.def;
+                            return (primary == pistol, $"primary={primary?.defName ?? "none"} job={abort.CurJobDef?.defName}");
                         }),
                     }
                 },
@@ -1636,9 +1960,34 @@ namespace CESSTacticsTestStaging
                         try
                         {
                             TacticsMod.Settings.reloadAbort = true;
+                            HealInjuries(abort);
+                            abort.drafter.FireAtWill = true; // restore phases 3-4's hold-fire
                             step = "undraft";
                             abort.drafter.Drafted = false;
                             abort.playerSettings.hostilityResponse = HostilityResponseMode.Ignore;
+                            step = "re-equip-rifle";
+                            // Rifle back in hand FIRST: the auto-abort phase leaves the
+                            // pistol equipped, and every pistol lookup below excludes the
+                            // equipped slot.
+                            ThingWithComps rif = UsableRifle();
+                            if (rif != null && abort.equipment?.Primary != rif)
+                            {
+                                abort.TryGetComp<CompInventory>().TrySwitchToWeapon(rif);
+                            }
+                            rif?.TryGetComp<CompAmmoUser>()?.ResetAmmoCount();
+                            step = "purge-decoys";
+                            // Phase 2's biocoded twin and dry decoy overfill the pack —
+                            // the next weapon switch bulk-drops the pistol to the floor.
+                            // Their job ended with phase 2; clear them and any duplicate
+                            // pistols phase 4's churn left behind.
+                            ThingWithComps keepPistol = Carried(abort, pistol);
+                            foreach (ThingWithComps extra in abort.GetCarriedWeapons(true, true)
+                                .Where(w => (w.def == rifle && w != abort.equipment?.Primary)
+                                    || (w.def == pistol && w != keepPistol)).ToList())
+                            {
+                                extra.Destroy(DestroyMode.Vanish);
+                            }
+                            abort.TryGetComp<CompInventory>().UpdateInventory();
                             step = "find-pistol";
                             ThingWithComps pi = Carried(abort, pistol);
                             if (pi == null)
@@ -1681,6 +2030,7 @@ namespace CESSTacticsTestStaging
                             }
                             step = "park";
                             ParkRaiderAt(abort, 20); // inside the rifle's range: the OLD trigger band
+                            Stun(Raider(), 9000);    // 20 cells is a short walk for fists
                         }
                         catch (Exception e)
                         {
