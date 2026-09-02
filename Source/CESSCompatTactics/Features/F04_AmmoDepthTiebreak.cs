@@ -82,6 +82,14 @@ namespace CESSCompatTactics.Features
             }
         }
 
+        // BEFORE the core patch's P03: when SS's pick is truly dry, P03 re-runs the
+        // selection (that inner call gets this postfix in full) and overwrites
+        // __result — running after it would apply the defer/tiebreak a SECOND time
+        // to the outer records with the floor re-anchored at the already-moved
+        // score, drifting the tie window toward (1−ε)² (T5-D). Running first, the
+        // overwrite discards this postfix's outer work and the composition is
+        // single-application by construction.
+        [HarmonyBefore(CESimpleSidearmsCompat.Bootstrap.HarmonyId)]
         [HarmonyPostfix]
         public static void Postfix(ref (ThingWithComps weapon, float dps, float averageSpeed) __result)
         {

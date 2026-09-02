@@ -26,13 +26,17 @@ namespace CESSCompatTactics.Features
     ///
     /// Two pieces remain modeled, each cited and fingerprint-guarded (a checksum of
     /// the upstream method's IL at load turns silent drift into a loud re-verify
-    /// error): the deflect-to-blunt CONVERSION — cbrt(bluntPen × 10000)/10, from
-    /// GetDeflectDamageInfo, whose live execution would need a fabricated
-    /// DamageInfo and the Verb_MeleeAttackCE.LastAttackVerb global — and the
-    /// composition order (deflected sharp re-runs as blunt vs blunt armor, per
-    /// GetAfterArmorDamage). The AGGREGATION — chance-weighting over tools and
-    /// maneuvers, secondary-damage summation, the harmsHealth rule — copies
-    /// nothing: CE has no expected-damage-vs-target function at any layer.
+    /// error): the deflect-to-blunt CONVERSION — cbrt(bluntPen × 10000)/10 scaled
+    /// by the projectile's amount/damageAmountBase ratio, from GetDeflectDamageInfo,
+    /// whose live execution would need a fabricated DamageInfo and the
+    /// Verb_MeleeAttackCE.LastAttackVerb global — and the composition order per
+    /// GetAfterArmorDamage (also fingerprinted): a fully deflected sharp packet
+    /// re-runs as blunt vs blunt armor, and a sharp packet that penetrates WITH
+    /// damage loss additionally lands a partial-penetration blunt hit built from
+    /// the lost fraction of its penetration (T5-F). The AGGREGATION —
+    /// chance-weighting over tools and maneuvers, secondary-damage summation, the
+    /// harmsHealth rule — copies nothing: CE has no expected-damage-vs-target
+    /// function at any layer.
     ///
     /// Damage that cannot harm health (EMP's stun) leaves BOTH sides of the ratio:
     /// no derivable exchange rate, so SS's own EMP mode filters keep governing.
@@ -50,8 +54,23 @@ namespace CESSCompatTactics.Features
 
         private static readonly TryPenDel TryPen;
 
+        /// <summary>vanilla ProjectileProperties.damageAmountBase (private) — CE's
+        /// deflect conversion divides by it; null bind → scale 1 (primary packets
+        /// at normal quality are exact either way).</summary>
+        private static readonly AccessTools.FieldRef<Verse.ProjectileProperties, int> DamageBase;
+
         static TargetScoring()
         {
+            try
+            {
+                DamageBase = AccessTools.FieldRefAccess<Verse.ProjectileProperties, int>("damageAmountBase");
+            }
+            catch (Exception e)
+            {
+                DamageBase = null;
+                Log.Warning(PatchGuard.LogPrefix + "Could not bind ProjectileProperties.damageAmountBase — "
+                            + "deflect conversions score unscaled (exact for normal-quality primaries). " + e.Message);
+            }
             try
             {
                 MethodInfo mi = AccessTools.Method(typeof(ArmorUtilityCE), "TryPenetrateArmor",
@@ -79,6 +98,9 @@ namespace CESSCompatTactics.Features
             UpstreamFingerprint.Verify(typeof(ArmorUtilityCE), "GetDeflectDamageInfo",
                 UpstreamFingerprint.GetDeflectDamageInfoHash,
                 "the deflect-to-blunt conversion TargetScoring models");
+            UpstreamFingerprint.Verify(typeof(ArmorUtilityCE), "GetAfterArmorDamage",
+                UpstreamFingerprint.GetAfterArmorDamageHash,
+                "the composition TargetScoring mirrors (deflect re-run, partial-pen bonus hit)");
         }
 
         /// <summary>
@@ -104,12 +126,19 @@ namespace CESSCompatTactics.Features
             float sharpArmor = target.GetStatValue(StatDefOf.ArmorRating_Sharp);
             float bluntArmor = target.GetStatValue(StatDefOf.ArmorRating_Blunt);
 
+            // CE's deflect conversions scale by amount/damageAmountBase for
+            // projectile hits (GetDeflectDamageInfo) — the primary's quality-scaled
+            // amount and each secondary's own small amount, over the def's base.
+            float damageBase = DamageBase != null ? DamageBase(props) : -1f;
+            float ScaleFor(float actual) => damageBase > 0f ? actual / damageBase : 1f;
+
             float arrives = 0f;
             float total = 0f;
             if (props.damageDef?.harmsHealth ?? false)
             {
                 arrives += DamageThrough(props.damageDef, primaryDmg,
-                    props.armorPenetrationSharp, props.armorPenetrationBlunt, sharpArmor, bluntArmor);
+                    props.armorPenetrationSharp, props.armorPenetrationBlunt, sharpArmor, bluntArmor,
+                    ScaleFor(primaryDmg));
                 total += primaryDmg;
             }
             if (props.secondaryDamage != null)
@@ -123,10 +152,16 @@ namespace CESSCompatTactics.Features
                     // CE hands a sharp secondary the primary's penetration, an
                     // explosive one amount×0.8, anything else zero
                     // (SecondaryDamage.GetDinfo) — and zero-pen passes whole.
+                    // Chance-weight the RESULT, not the input: the deflect
+                    // conversion is cbrt-nonlinear in nothing but scoring-constant
+                    // pens, so a chance-weighted input amount left the full deflect
+                    // damage in the expectation regardless of chance (T5-F).
                     float pen = SecondaryPen(sec, props);
-                    float expected = sec.amount * Mathf.Clamp01(sec.chance);
-                    arrives += DamageThrough(sec.def, expected, pen, props.armorPenetrationBlunt, sharpArmor, bluntArmor);
-                    total += expected;
+                    float chance = Mathf.Clamp01(sec.chance);
+                    float perHit = DamageThrough(sec.def, sec.amount, pen,
+                        props.armorPenetrationBlunt, sharpArmor, bluntArmor, ScaleFor(sec.amount));
+                    arrives += perHit * chance;
+                    total += sec.amount * chance;
                 }
             }
             if (total <= 0f)
@@ -190,7 +225,8 @@ namespace CESSCompatTactics.Features
                 float perManeuver = weight * tool.power / damageDefs.Count;
                 foreach (DamageDef def in damageDefs)
                 {
-                    arrives += DamageThrough(def, perManeuver, penSharp, penBlunt, sharpArmor, bluntArmor);
+                    // Melee: GetDeflectDamageInfo has no amount scaling branch.
+                    arrives += DamageThrough(def, perManeuver, penSharp, penBlunt, sharpArmor, bluntArmor, 1f);
                     total += perManeuver;
                 }
             }
@@ -223,11 +259,14 @@ namespace CESSCompatTactics.Features
         /// Expected damage arriving through armor for one damage packet — CE's own
         /// TryPenetrateArmor executed on the pure (armor:null) path, composed the way
         /// GetAfterArmorDamage composes it: a fully deflected sharp hit converts to
-        /// blunt (the one modeled line) and re-runs the real arithmetic against
-        /// blunt armor.
+        /// blunt (the modeled cbrt line, deflectScale = the projectile's
+        /// amount/damageAmountBase ratio, 1 for melee) and re-runs the real
+        /// arithmetic against blunt armor; a sharp hit that penetrates WITH damage
+        /// loss additionally lands the partial-penetration blunt bonus hit
+        /// (GetAfterArmorDamage's post-loop TakeDamage; T5-F).
         /// </summary>
         private static float DamageThrough(DamageDef def, float dmg, float penSharp, float penBlunt,
-                                           float sharpArmor, float bluntArmor)
+                                           float sharpArmor, float bluntArmor, float deflectScale)
         {
             StatDef armorStat = def.armorCategory?.armorRatingStat;
             if (armorStat == StatDefOf.ArmorRating_Sharp)
@@ -238,17 +277,32 @@ namespace CESSCompatTactics.Features
                     float through = dmg;
                     if (TryPen(def, sharpArmor, ref pen, ref through, null, 0f))
                     {
+                        // Partial penetration: the LOST fraction of the penetration
+                        // converts to blunt (GetDeflectDamageInfo partialPen:
+                        // ((AP − penLeft) × lostDmg/amount)/AP) and the bonus hit
+                        // runs the real blunt arithmetic.
+                        if (through < dmg && penSharp > 0f && dmg > 0f)
+                        {
+                            float lostFraction = (penSharp - pen) / penSharp * ((dmg - through) / dmg);
+                            float penPartial = penBlunt * lostFraction;
+                            if (penPartial > 0f)
+                            {
+                                float bonus = Mathf.Pow(penPartial * 10000f, 1f / 3f) / 10f * deflectScale;
+                                TryPen(DamageDefOf.Blunt, bluntArmor, ref penPartial, ref bonus, null, 0f);
+                                through += bonus;
+                            }
+                        }
                         return through;
                     }
                     // Full deflection: CE converts the hit to blunt at
                     // cbrt(bluntPen × 10000)/10 damage (GetDeflectDamageInfo — the
                     // modeled, fingerprint-guarded line) and runs it at blunt armor.
                     float pen2 = penBlunt;
-                    float deflected = Mathf.Pow(penBlunt * 10000f, 1f / 3f) / 10f;
+                    float deflected = Mathf.Pow(penBlunt * 10000f, 1f / 3f) / 10f * deflectScale;
                     TryPen(DamageDefOf.Blunt, bluntArmor, ref pen2, ref deflected, null, 0f);
                     return deflected;
                 }
-                return FallbackSharp(def, dmg, penSharp, penBlunt, sharpArmor, bluntArmor);
+                return FallbackSharp(def, dmg, penSharp, penBlunt, sharpArmor, bluntArmor, deflectScale);
             }
             if (armorStat == StatDefOf.ArmorRating_Blunt)
             {
@@ -271,7 +325,7 @@ namespace CESSCompatTactics.Features
         // conversion above. Kept verbatim from the T2 model, source cited there.
 
         private static float FallbackSharp(DamageDef def, float dmg, float penSharp, float penBlunt,
-                                           float sharpArmor, float bluntArmor)
+                                           float sharpArmor, float bluntArmor, float deflectScale)
         {
             // CE's "penAmount==0 passes whole" case is BLUNT-only: for sharp, the
             // deflect verdict (armor > pen) is checked FIRST, so zero-pen sharp vs
@@ -279,13 +333,27 @@ namespace CESSCompatTactics.Features
             // the fallback must match it (T4-3).
             if (penSharp > sharpArmor)
             {
-                return dmg * FallbackPasses(penSharp, sharpArmor);
+                float through = dmg * FallbackPasses(penSharp, sharpArmor);
+                // Partial-pen blunt bonus, expectation form: penLeft = pen − armor,
+                // so the lost pen fraction is armor/pen (T5-F, mirroring the
+                // delegate path above).
+                if (through < dmg && dmg > 0f)
+                {
+                    float lostFraction = sharpArmor / penSharp * ((dmg - through) / dmg);
+                    float penPartial = penBlunt * lostFraction;
+                    if (penPartial > 0f)
+                    {
+                        float bonus = Mathf.Pow(penPartial * 10000f, 1f / 3f) / 10f * deflectScale;
+                        through += bonus * FallbackPasses(penPartial, bluntArmor);
+                    }
+                }
+                return through;
             }
             if (sharpArmor <= 0f)
             {
                 return dmg; // zero pen vs zero armor: nothing to deflect off
             }
-            float deflected = Mathf.Pow(penBlunt * 10000f, 1f / 3f) / 10f;
+            float deflected = Mathf.Pow(penBlunt * 10000f, 1f / 3f) / 10f * deflectScale;
             return deflected * FallbackPasses(penBlunt, bluntArmor);
         }
 
@@ -312,6 +380,7 @@ namespace CESSCompatTactics.Features
         internal const string TryPenetrateArmorHash = "7b66aeb80967e00d";
         internal const string GetDeflectDamageInfoHash = "cf4967c8bf864887";
         internal const string DoReloadCheckHash = "24ec22f8bfb61eb8";
+        internal const string GetAfterArmorDamageHash = "d65d743e005da6c9";
 
         internal static void Verify(Type type, string method, string expected, string protects)
         {

@@ -52,6 +52,9 @@ namespace CESSCompatTactics.Features
 
         public ReloadAbortComponent(Game game)
         {
+            // Constructed once per new-or-loaded game: the marker's stamps do not
+            // survive the transition (see PlayerReloadMarker.Reset).
+            PlayerReloadMarker.Reset();
         }
 
         public override void GameComponentTick()
@@ -250,6 +253,85 @@ namespace CESSCompatTactics.Features
                 PlayerReloadMarker.Installed = false;
             }
         }
+
+        /// <summary>Prepare runs BEFORE the prefix is applied, and application can
+        /// still throw (a co-loaded mod's broken patch on the same method fails the
+        /// whole patch merge) — without this, Installed stayed true with no prefix
+        /// installed, silently inverting the documented conservative degrade into
+        /// "every player-forced reload is abortable" (T5-A). The exception is
+        /// returned, not swallowed, so Bootstrap's per-class accounting still logs
+        /// the failure.</summary>
+        [HarmonyCleanup]
+        public static Exception Cleanup(Exception ex)
+        {
+            if (ex != null)
+            {
+                PlayerReloadMarker.Installed = false;
+            }
+            return ex;
+        }
+    }
+
+    /// <summary>
+    /// The under-barrel MODE SWITCH is the fourth reload entry and it is a player
+    /// command too: CompUnderBarrel.SwitchToUB / SwithToB (sic — upstream's own
+    /// spelling) are gizmo-invoked and end in CompAmmo.TryStartReload() when the
+    /// launcher needs loading, which stamps playerForced like the ran-dry auto
+    /// path. Unstamped, the abort would override an explicit "use the launcher
+    /// now" (T5-E). Same marker join as the gizmo: the switch ends any running
+    /// reload job and starts the new one inside the same call, so the stamp
+    /// lands at-or-before its startTick. These classes never touch
+    /// PlayerReloadMarker.Installed — if CE reshapes CompUnderBarrel, only the
+    /// switch-reload protection is lost, and the guard names exactly that.
+    /// </summary>
+    [HarmonyPatch(typeof(CompUnderBarrel), nameof(CompUnderBarrel.SwitchToUB), new Type[0])]
+    public static class CompUnderBarrel_SwitchToUB_Patch
+    {
+        public static bool Prepare() => PatchGuard.Require(typeof(CompUnderBarrel), "SwitchToUB",
+            new Type[0],
+            "under-barrel mode-switch reloads cannot be marked as player-ordered; "
+            + "reload-abort may interrupt them (main gizmo reloads stay protected).");
+
+        [HarmonyPrefix]
+        public static void Prefix(CompUnderBarrel __instance)
+        {
+            UnderBarrelMarker.StampSwitch(__instance);
+        }
+    }
+
+    [HarmonyPatch(typeof(CompUnderBarrel), nameof(CompUnderBarrel.SwithToB), new Type[0])]
+    public static class CompUnderBarrel_SwithToB_Patch
+    {
+        public static bool Prepare() => PatchGuard.Require(typeof(CompUnderBarrel), "SwithToB",
+            new Type[0],
+            "under-barrel switch-back reloads cannot be marked as player-ordered; "
+            + "reload-abort may interrupt them (main gizmo reloads stay protected).");
+
+        [HarmonyPrefix]
+        public static void Prefix(CompUnderBarrel __instance)
+        {
+            UnderBarrelMarker.StampSwitch(__instance);
+        }
+    }
+
+    internal static class UnderBarrelMarker
+    {
+        internal static void StampSwitch(CompUnderBarrel comp)
+        {
+            try
+            {
+                Pawn wielder = comp?.CompAmmo?.Wielder;
+                if (wielder != null)
+                {
+                    PlayerReloadMarker.Stamp(wielder);
+                }
+            }
+            catch (Exception e)
+            {
+                Log.ErrorOnce(PatchGuard.LogPrefix + "Under-barrel switch marker failed; the abort "
+                              + "may interrupt switch reloads this session. " + e, 0x54414310);
+            }
+        }
     }
 
     internal static class PlayerReloadMarker
@@ -270,7 +352,25 @@ namespace CESSCompatTactics.Features
 
         internal static bool WasPlayerOrdered(Pawn pawn, int jobStartTick)
         {
-            return stamps.TryGetValue(pawn, out int tick) && tick == jobStartTick;
+            // AT-OR-AFTER, not equality: re-clicking the gizmo mid-reload re-stamps
+            // while CE's TryStartReload early-outs on the already-running job — the
+            // stamp then postdates startTick, and exact equality would strip the very
+            // protection the click expressed (T5-C). A stamp can only postdate a
+            // running reload's start if the player ordered a reload DURING it, which
+            // blesses that job; a stamp older than the start belongs to a previous
+            // job and correctly fails.
+            return stamps.TryGetValue(pawn, out int tick) && tick >= jobStartTick;
+        }
+
+        /// <summary>New game or loaded save: stamps are session-plumbing keyed on
+        /// object identity and tick clocks that both reset across loads — stale
+        /// entries could otherwise pin dead pawn graphs and, after loading an
+        /// earlier-tick save, sit unprunable behind the tick-delta test (T5-B).
+        /// Cost of the wipe: a reload that was mid-flight at save time degrades to
+        /// flag-only protection for that one job.</summary>
+        internal static void Reset()
+        {
+            stamps.Clear();
         }
     }
 
