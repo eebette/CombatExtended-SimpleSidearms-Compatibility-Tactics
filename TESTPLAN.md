@@ -36,6 +36,15 @@ tact3→TACT-3-tiebreak, tact4→TACT-4-ammo-target, tact5→TACT-5-melee-target
   each phase that needs a toggle enables it ITSELF (arrange or mutate), so
   isolated runs test what the label claims.
 
+## Green pass — 2026-09-02 (T5: second confirmation round, converged)
+
+T5 (section below) found zero HIGHs — the T4 core is clean — and closed a
+ring of edge seams around the T4-2 marker (install fail-open, gizmo
+re-click, save/load stamps, under-barrel switches), the F04↔P03 postfix
+ordering, and two TargetScoring model-fidelity gaps. 34 phases sequenced AND
+isolated green; the T5-C A-leg ran red. Census is now ≥14 patched methods
+(the two `CompUnderBarrel` switch markers).
+
 ## Green pass — 2026-09-02 (T4: confirmation round fixed and pinned)
 
 34 phases (28 behavioral + 6 census), sequenced AND isolated — full board
@@ -297,6 +306,90 @@ re-pass on the seams the T3 fixes introduced. Both independently found C1.
   hopeless phase steps its target closer until a shot happens; tact6's
   raider must park outside the RIFLE's range or the drafted pawn's auto-fire
   refreshes the reload cooldown forever.
+
+## T5 confirmation round (2026-09-02, post-T4 adversarial re-pass)
+
+Two attackers (fresh full-repo + mechanical seam re-pass on the six T4 fix
+seams) over the committed T4 state. Verdict: the T4 core fixes are sound —
+both attackers independently traced T4-1's currency, T4-2's marker mechanics,
+T4-3's fallback alignment, the fingerprints, Bootstrap, and the F01 gate
+order CLEAN. Zero HIGHs. What they found is a ring of edge seams around the
+T4-2 marker plus two model-fidelity gaps:
+
+- **T5-A (Medium, found independently by both)**: the marker's `Installed`
+  flag was set in Prepare — BEFORE Harmony applies the prefix — and
+  Bootstrap's catch never reset it, so a co-loaded mod whose broken patch on
+  `SyncedTryStartReload` fails the patch merge left `Installed=true` with no
+  prefix installed: empty stamps, every player-forced reload classified as
+  CE-auto — the exact inversion of the documented conservative degrade. Fix:
+  `[HarmonyCleanup] Exception Cleanup(Exception ex)` resets the flag on an
+  application failure and RETURNS the exception so Bootstrap's per-class
+  accounting still logs it.
+- **T5-C (Medium)**: re-clicking the reload gizmo mid-reload re-stamps while
+  CE's `TryStartReload` early-outs on the already-running job — the stamp
+  then postdates `startTick`, and the exact-equality join stripped the very
+  protection the click expressed. Fix: at-or-after join (`tick >=
+  jobStartTick`) — a stamp can only postdate a running reload's start if the
+  player ordered a reload DURING it, which blesses that job (including an
+  in-flight auto reload the player re-clicks — deliberate semantics).
+  Verified live before fixing: forensics `stamp=330 startBefore=270
+  startAfter=270` — the orphaned-stamp mechanism exactly as reported.
+- **T5-B (Low)**: marker stamps are session-state (never scribed, keyed on
+  object identity and a tick clock that both reset across loads) — after
+  save/load a mid-flight gizmo reload lost its stamp and became abortable,
+  and stale cross-game entries could sit unprunable behind the negative
+  tick-delta test. Fix: `PlayerReloadMarker.Reset()` from
+  `ReloadAbortComponent`'s ctor (one per new-or-loaded game). Cost accepted
+  and documented: a reload mid-flight at save time degrades to flag-only
+  protection for that one job.
+- **T5-D (Low)**: F04's findBestRangedWeapon postfix composed AFTER the core
+  patch's P03 dry-pick re-run — when SS's pick was truly dry, P03's
+  overwrite (whose inner call is already fully F04-processed) got
+  re-processed by the outer F04 postfix against the outer records with the
+  floor re-anchored at the already-moved score, drifting the tie window
+  toward (1−ε)². Fix: `[HarmonyBefore(CESimpleSidearmsCompat.Bootstrap
+  .HarmonyId)]` on the postfix — P03's overwrite now runs last and discards
+  the outer application; single-application by construction.
+- **T5-E (Low, intent-classification)**: CE's under-barrel mode switch
+  (`CompUnderBarrel.SwitchToUB`/`SwithToB` — upstream's own spelling) is a
+  player command ending in `TryStartReload()`, indistinguishable from the
+  ran-dry auto reload under the flag+marker scheme — the abort could
+  override an explicit "use the launcher now". Fix: both switch entries get
+  the same marker prefix (census 14). Their guards never touch
+  `Installed` — if CE reshapes CompUnderBarrel, only switch-reload
+  protection is lost, and the guard names exactly that.
+- **T5-F (Low, model fidelity)**: TargetScoring's composition omitted two
+  elements of CE's real `GetAfterArmorDamage` flow: (a) the partial-pen
+  BONUS blunt hit every sharp packet that penetrates with damage loss also
+  lands (lost-pen fraction → cbrt conversion → real blunt arithmetic), and
+  (b) the deflect conversion's `amount/damageAmountBase` scaling for
+  projectiles (quality-scaled primaries; small-amount secondaries were
+  overstated — the secondary call site now chance-weights the RESULT, since
+  the cbrt term is amount-independent and chance-weighting the input left
+  full deflect damage in the expectation regardless of chance). Both terms
+  now composed (fallback mirrored in expectation form);
+  `GetAfterArmorDamage` added to the fingerprint set
+  (`d65d743e005da6c9`).
+
+## A/B — the T5 fix set (2026-09-02)
+
+- **T5-C**: A-leg (`>=` reverted to `==`) red at
+  `player-forced-reload-untouchable` — `primary=Gun_Autopistol`, the abort
+  overrode the player's re-clicked reload; B-leg green. Two vacuous A-legs
+  first: the phase's pistol was EMPTY (phase 2's firefight) and then GONE
+  (any weapon switch bulk-drops it while phase 2's staging rifles overfill
+  the pack) — the pin now purges the decoys post-switch and
+  recovers-and-loads the pistol, and the re-click rides the phase's poll
+  with marker forensics on the check detail.
+- **T5-A/B/D/E**: no dedicated legs — T5-A/B are Harmony-lifecycle and
+  save-lifecycle seams covered by the doctrine (Cleanup semantics are
+  Harmony's documented contract; Reset is ctor-driven), T5-D is a patch-
+  ordering attribute whose effect the census + tact4 armor phases exercise,
+  T5-E is presence-pinned by census 14 (no under-barrel weapon staged in the
+  suite; behavior follows T4-2's proven marker join).
+- **T5-F**: numeric-only scoring change; the tact4/tact5 armor boards
+  re-passed green (composition intact); guarded by the new
+  GetAfterArmorDamage fingerprint.
 
 ## T4 confirmation round (2026-09-02, post-convergence adversarial re-pass)
 

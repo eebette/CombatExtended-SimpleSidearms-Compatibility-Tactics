@@ -265,8 +265,8 @@ namespace CESSTacticsTestStaging
                         // JobGiver_CheckReload.DoReloadCheck (drafted sidearm top-off),
                         // Extensions.GetCarriedWeapons (reload-abort's loaded-now scope),
                         // CompAmmoUser.SyncedTryStartReload (the reload gizmo's marker).
-                        return (mine.Count >= 12,
-                            $"methods patched by eebette.CESimpleSidearmsCompat.Tactics={mine.Count} (want >= 12): "
+                        return (mine.Count >= 14,
+                            $"methods patched by eebette.CESimpleSidearmsCompat.Tactics={mine.Count} (want >= 14): "
                             + string.Join(", ", mine.Select(m => m.DeclaringType?.Name + "." + m.Name).OrderBy(n => n)));
                     }),
                 }
@@ -1695,6 +1695,8 @@ namespace CESSTacticsTestStaging
             ThingDef rifle = D("Gun_AssaultRifle");
             ThingDef pistol = D("Gun_Autopistol");
             string autoReloadSnapshot = "";
+            bool gizmoReClicked = false;
+            string reClickForensics = "unset";
 
             // Carried() order is churn-dependent and phase 2 stages a biocoded twin —
             // equipping THAT makes later reload/abort pins run on a gun SS refuses to
@@ -1807,6 +1809,7 @@ namespace CESSTacticsTestStaging
                         // late-suite pain-shock downing can't masquerade as a feature bug.
                         HealInjuries(abort);
                         abort.drafter.FireAtWill = false;
+                        gizmoReClicked = false;
                     },
                     mutate = () =>
                     {
@@ -1816,6 +1819,31 @@ namespace CESSTacticsTestStaging
                         // (SyncedTryStartReload; T4-2), not a synthetic flag.
                         ThingWithComps rifleThing = UsableRifle();
                         abort.TryGetComp<CompInventory>().TrySwitchToWeapon(rifleThing);
+                        // Phase 2's staging rifles overfill the pack, and any weapon
+                        // switch bulk-drops the pistol — purge them AFTER the switch,
+                        // then guarantee a LOADED pistol: without one a stripped marker
+                        // still "declines" and the T5-C A-leg is green through vacuity.
+                        foreach (ThingWithComps extra in abort.GetCarriedWeapons(true, true)
+                            .Where(w => w.def == rifle && w != abort.equipment?.Primary).ToList())
+                        {
+                            extra.Destroy(DestroyMode.Vanish);
+                        }
+                        abort.TryGetComp<CompInventory>().UpdateInventory();
+                        ThingWithComps gpi = Carried(abort, pistol);
+                        if (gpi == null)
+                        {
+                            Thing ground = abort.Map.listerThings.ThingsOfDef(pistol).FirstOrDefault();
+                            gpi = ground as ThingWithComps
+                                ?? (ThingWithComps)ThingMaker.MakeThing(pistol);
+                            if (gpi.Spawned)
+                            {
+                                gpi.DeSpawn();
+                            }
+                            abort.inventory.innerContainer.TryAdd(gpi, false);
+                            abort.TryGetComp<CompInventory>().UpdateInventory();
+                            CompSidearmMemory.GetMemoryCompForPawn(abort)?.InformOfAddedSidearm(gpi);
+                        }
+                        gpi.TryGetComp<CompAmmoUser>()?.ResetAmmoCount();
                         // Close park on purpose: a loaded pistol in range means the
                         // unmarked path WOULD abort-and-swap here, so the gizmo marker
                         // is the only thing letting this reload finish. Stunned, so the
@@ -1827,6 +1855,36 @@ namespace CESSTacticsTestStaging
                         AccessTools.Method(typeof(CompAmmoUser), "SyncedTryStartReload")
                             .Invoke(ru, null);
                     },
+                    // T5-C: an impatient second gizmo click mid-reload re-stamps while
+                    // CE's TryStartReload early-outs on the running job — the stamp then
+                    // postdates startTick, and the exact-equality join stripped the very
+                    // protection the click expressed. Re-click for real ~30 ticks in;
+                    // the at-or-after join must keep the reload untouchable.
+                    poll = () =>
+                    {
+                        if (!gizmoReClicked && abort.CurJobDef == CE_JobDefOf.ReloadWeapon
+                            && Find.TickManager.TicksGame - abort.CurJob.startTick > 30)
+                        {
+                            gizmoReClicked = true;
+                            int startBefore = abort.CurJob.startTick;
+                            CompAmmoUser ru = abort.equipment?.Primary?.TryGetComp<CompAmmoUser>();
+                            if (ru != null)
+                            {
+                                AccessTools.Method(typeof(CompAmmoUser), "SyncedTryStartReload")
+                                    .Invoke(ru, null);
+                            }
+                            var markerType = AccessTools.TypeByName("CESSCompatTactics.Features.PlayerReloadMarker");
+                            var stampsDict = (System.Collections.IDictionary)AccessTools
+                                .Field(markerType, "stamps").GetValue(null);
+                            object stamp = stampsDict.Contains(abort) ? stampsDict[abort] : (object)(-1);
+                            int startAfter = abort.CurJobDef == CE_JobDefOf.ReloadWeapon
+                                ? abort.CurJob.startTick : -1;
+                            reClickForensics = $"tick={Find.TickManager.TicksGame} stamp={stamp} "
+                                + $"startBefore={startBefore} startAfter={startAfter} "
+                                + $"installed={AccessTools.Field(markerType, "Installed").GetValue(null)} "
+                                + $"pistolMag={Carried(abort, pistol)?.TryGetComp<CompAmmoUser>()?.CurMagCount}";
+                        }
+                    },
                     checks =
                     {
                         C("forced-reload-completes", () =>
@@ -1834,8 +1892,11 @@ namespace CESSTacticsTestStaging
                             ThingWithComps primary = abort.equipment?.Primary;
                             CompAmmoUser user = primary?.TryGetComp<CompAmmoUser>();
                             bool full = primary?.def == rifle && user != null && user.CurMagCount == user.MagSize;
-                            return (full, $"primary={primary?.def?.defName} mag={user?.CurMagCount}/{user?.MagSize} job={abort.CurJobDef?.defName}");
+                            return (full, $"primary={primary?.def?.defName} mag={user?.CurMagCount}/{user?.MagSize} "
+                                + $"job={abort.CurJobDef?.defName} reClicked={gizmoReClicked}");
                         }),
+                        C("mid-reload-re-click-happened", () =>
+                            (gizmoReClicked, $"reClicked={gizmoReClicked} {reClickForensics}")),
                     }
                 },
                 new Phase
