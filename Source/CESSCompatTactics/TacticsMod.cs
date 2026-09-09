@@ -6,10 +6,8 @@ namespace CESSCompatTactics
 {
     public class TacticsSettings : ModSettings
     {
-        // Installing THIS mod is the opt-in (owner's call 2026-08-18): the headline
-        // behaviors ship ON. The one exception is forced-dry fall-through — it
-        // overrides explicit player intent (a forced weapon), a different consent
-        // category, so it alone stays OFF by default.
+        // Forced-dry fall-through default: OFF since it
+        // overrides explicit player intent (a forced weapon).
         public bool reloadAbort = true;
         public bool forcedDryFallthrough = false;
         public bool ammoDepthTiebreak = true;
@@ -49,20 +47,20 @@ namespace CESSCompatTactics
         {
             var listing = new Listing_Standard();
             listing.Begin(inRect);
-            listing.CheckboxLabeled("Reload-abort when threatened", ref Settings.reloadAbort,
-                "A pawn mid-reload with a hostile in effective range swaps to a loaded carried weapon instead of finishing the reload. Player-ordered reloads are never interrupted; the abandoned reload resumes via CE's normal idle reload behavior.");
-            listing.CheckboxLabeled("Forced-weapon dry fall-through", ref Settings.forcedDryFallthrough,
-                "Under CE a forced weapon can run completely dry, which vanilla forcing never anticipated — so \"use this weapon\" has two possible meanings. OFF (default): hold it no matter what, literally as ordered. ON: prefer it while usable, fall back to normal selection while it is truly out of ammo. The forced setting itself is never cleared and resumes the moment ammo is available.");
-            listing.CheckboxLabeled("Ammo-depth tiebreak", ref Settings.ammoDepthTiebreak,
+            listing.CheckboxLabeled("Allow weapon switch when threatened while reloading", ref Settings.reloadAbort,
+                "A pawn mid-reload with a hostile in effective range swaps to a loaded carried weapon instead of finishing the reload. Player-ordered reloads are never interrupted.");
+            listing.CheckboxLabeled("Allow weapon switch on forced weapons if no ammo available.", ref Settings.forcedDryFallthrough,
+                "OFF (default): hold the forced weapon no matter what. ON: prefer it while usable, fall back to normal selection while it is out of ammo. The forced setting isn't never cleared and resumes the moment ammo is available.");
+            listing.CheckboxLabeled("Enable tiebreaker for sidearm choice based on amount of ammo for each gun in inventory", ref Settings.ammoDepthTiebreak,
                 "When two carried guns rank within the margin below, prefer the one with deeper ammo reserves (magazine + carried spares).");
             listing.Label($"Tiebreak margin: {Settings.tiebreakEpsilonPct}% of the top score");
             Settings.tiebreakEpsilonPct = Mathf.RoundToInt(listing.Slider(Settings.tiebreakEpsilonPct, 0f, 30f));
-            listing.CheckboxLabeled("Target-aware ammo scoring", ref Settings.targetAwareAmmoScoring,
-                "When choosing which gun to draw against a target, weigh the CURRENTLY-LOADED ammo's effectiveness against that target (penetration vs armor, EMP vs mechs). Never switches or reloads ammo.");
-            listing.CheckboxLabeled("Armor-aware melee choice", ref Settings.armorAwareMelee,
-                "When drawing a melee weapon against a target, pick by CE melee-tool effectiveness against that target's armor (blunt vs armored, fast blades vs flesh).");
-            listing.CheckboxLabeled("Drafted sidearm top-off", ref Settings.draftedSidearmReload,
-                "Extends Combat Extended's drafted lull-reload from the equipped weapon to carried sidearms: during a combat lull (CE's own cooldown and safe-distance rules) a drafted pawn also refills empty sidearm magazines. Obeys CE's opportunistic-reload mode and per-weapon settings.");
+            listing.CheckboxLabeled("Enable target-aware ammo scoring", ref Settings.targetAwareAmmoScoring,
+                "When choosing which gun to draw against a target, weigh the loaded ammo's effectiveness against the specific target.");
+            listing.CheckboxLabeled("Enable armor-aware melee choice", ref Settings.armorAwareMelee,
+                "When drawing a melee weapon against a target, pick by melee-tool effectiveness against that specific target's armor (blunt vs armored, fast blades vs flesh).");
+            listing.CheckboxLabeled("Enable sidearm top-off while drafted", ref Settings.draftedSidearmReload,
+                "Extends drafted lull-reload from the equipped weapon to carried sidearms: during a combat lull a drafted pawn also refills empty sidearm magazines.");
             listing.End();
         }
     }
@@ -74,14 +72,11 @@ namespace CESSCompatTactics
 
         static Bootstrap()
         {
-            // Per class, not PatchAll: one class's binding failure (an upstream member
-            // moved) costs that one feature with a named error, not the whole module.
+            // Per class, not PatchAll.
             var harmony = new Harmony(HarmonyId);
             int applied = 0;
             var failures = new System.Collections.Generic.List<string>();
-            // Two of TargetScoring's upstream fingerprints live in its static ctor;
-            // without this they would verify at first combat scoring instead of at
-            // load, invisible to the census startup sweep (T4-5).
+            // Two of TargetScoring's upstream fingerprints live in its static ctor
             try
             {
                 System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor(
@@ -95,15 +90,11 @@ namespace CESSCompatTactics
             {
                 try
                 {
-                    // The attribute probe sits INSIDE the try: decoding [HarmonyPatch]
-                    // resolves its typeof() args, and upstream type-level drift there
-                    // must cost one class, not abort the whole loop (T4-6).
                     if (type.GetCustomAttributes(typeof(HarmonyPatch), inherit: false).Length == 0)
                     {
                         continue;
                     }
-                    // Patch() returns the patched methods; a Prepare-false class
-                    // returns none and is SKIPPED, not applied (convergence note).
+                    // Patch() returns the patched methods.
                     var patched = harmony.CreateClassProcessor(type).Patch();
                     if (patched != null && patched.Count > 0)
                     {
@@ -113,7 +104,7 @@ namespace CESSCompatTactics
                 catch (System.Exception e)
                 {
                     failures.Add(type.Name);
-                    Log.Error($"{PatchGuard.LogPrefix}Patch class {type.Name} could not be applied — "
+                    Log.Error($"{PatchGuard.LogPrefix}Patch class {type.Name} could not be applied - "
                               + $"that one feature is inactive, the others still work. {e}");
                 }
             }
