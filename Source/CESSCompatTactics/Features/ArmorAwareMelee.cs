@@ -10,34 +10,7 @@ using static PeteTimesSix.SimpleSidearms.Utilities.Enums;
 namespace CESSCompatTactics.Features
 {
     /// <summary>
-    /// Feature 6: armor-aware melee choice — reworked twice over (T3-2).
-    ///
-    /// The first version postfixed findBestMeleeWeapon and read its target
-    /// parameter. That parameter is DEAD WIRING in this SS build: the CQC/ordered
-    /// paths hand their target to equipBestWeaponFromInventoryByPreference, which
-    /// never forwards it to the findBestMeleeWeapon call — the only such call in
-    /// the game. So the feature never fired outside the harness. The version also
-    /// re-enumerated candidates without SS's usability/mod filters and fed the
-    /// scoring a zero averageSpeed that cancelled the player's speed-bias setting.
-    ///
-    /// This rework is the F04 pattern, melee edition:
-    ///  - A prefix on equipBestWeaponFromInventoryByPreference — the method the
-    ///    target actually reaches — opens a call-lifetime SCOPE carrying it
-    ///    (finalizer closes; nesting saved/restored via __state).
-    ///  - A postfix on getMeleeDPSBiased — the scoring call inside SS's own
-    ///    selection loop — adjusts the outgoing score in place while the scope is
-    ///    open: divide out SS's generic (1 + penetration) armor bonus (the same
-    ///    P12/P13-backed MeleePenetration SS multiplied in, so the division is
-    ///    exact) and multiply the fraction of damage that survives THIS target's
-    ///    armor (TargetScoring.MeleeTargetFactor). Against flesh that leaves pure
-    ///    CE damage-per-second — the fast blade wins; against armor the fraction
-    ///    takes over. SS keeps its filters, its real averageSpeed, its speed
-    ///    bias, and its comparison. Every (weapon, raw, adjusted) pair is
-    ///    RECORDED (per weapon — SS scores each candidate twice via Max+MaxBy).
-    ///  - A postfix on findBestMeleeWeapon applies the all-hopeless defer from
-    ///    the records: when every candidate's adjusted score is zero (centipede
-    ///    plate vs a colonist's pocket), re-ranking zeros is noise — the raw
-    ///    ranking, which IS SS's own target-blind pick, stands.
+    /// Armor-aware melee choice.
     /// </summary>
     internal static class MeleeSelectionScope
     {
@@ -124,14 +97,7 @@ namespace CESSCompatTactics.Features
             if (raw > 0f
                 && TargetScoring.TryMeleeTargetFactor(weapon, MeleeSelectionScope.Target, out float factor))
             {
-                // SS's score factors as (dmg/biasedSpeed) × (1 + pen): the (1+pen)
-                // term is a GENERIC armor bonus paid against every target. Divide it
-                // out — MeleePenetration is the very input SS multiplied in, so this
-                // is exact — and substitute the actual through-armor fraction.
-                // An unmodelable weapon (no CE tools) is left completely untouched:
-                // dividing it while handing back factor 1 made an unpatched mod
-                // weapon the automatic "armor answer" and suppressed the defer
-                // (convergence C5).
+                // SS exposes no pre-armor score so back into it from raw
                 adjusted = raw / (1f + StatCalculator.MeleePenetration(weapon, pawn)) * factor;
                 modeled = true;
             }
@@ -175,9 +141,7 @@ namespace CESSCompatTactics.Features
             {
                 return;
             }
-            // All-hopeless defer: nothing MODELED does anything to this target
-            // (unmodelable weapons neither trigger nor block it — convergence C5) —
-            // the recorded raw ranking IS SS's target-blind pick; restore it.
+            // Nothing MODELED does anything to this target so restore SS's target-blind pick.
             if (records.Values.Any(r => r.modeled)
                 && records.Values.Where(r => r.modeled).All(r => r.adjusted <= 0f)
                 && records.Values.Any(r => r.raw > 0f))

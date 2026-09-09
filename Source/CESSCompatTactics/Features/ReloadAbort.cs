@@ -15,36 +15,8 @@ using static PeteTimesSix.SimpleSidearms.Utilities.Enums;
 namespace CESSCompatTactics.Features
 {
     /// <summary>
-    /// Feature 1: reload-abort when threatened. A colonist mid-reload of the gun in
-    /// their HANDS, with a hostile in effective range, swaps to a loaded carried
-    /// weapon instead of finishing the reload. Backpack top-offs (CE's undrafted
-    /// pass, F07's drafted pass) are never touched — the primary is fine (T3-1).
-    ///
-    /// No Harmony patch on the reload driver: a lightweight GameComponent scan every
-    /// 30 ticks over the (few) pawns currently reloading, on every loaded map.
-    /// Target provenance per the brief: vanilla AttackTargetFinder.BestAttackTarget
-    /// supplies the target, and its non-null result IS the "threatened" trigger.
-    /// GUARDS: player-ORDERED reloads (the reload gizmo) and player-forced weapons
-    /// are untouchable. CE stamps job.playerForced=true on EVERY reload its
-    /// TryStartReload issues — the gizmo AND the automatic ran-dry reload that
-    /// fires the instant a magazine empties mid-attack (T4-2: gating on the flag
-    /// alone made the abort dead in its flagship scenario). The gizmo's one
-    /// distinct entry point, CompAmmoUser.SyncedTryStartReload, is therefore
-    /// tagged by the marker patch below; a player-forced reload with no fresh
-    /// tag is CE's automatic one and is fair game. If the marker cannot install
-    /// (upstream drift), EVERY player-forced reload stays untouchable — the
-    /// conservative direction. The abandoned reload is left to CE's own flow.
-    ///
-    /// SELECTION IS SS'S, NOT OURS (convergence C3): the winner comes from SS's own
-    /// findBestRangedWeapon — its full filter chain (biocode, VFE shields,
-    /// Tacticowl, manual/dangerous/EMP, the per-weapon range window) and, through
-    /// F04's scope, the same target-aware scoring as everywhere else. The one thing
-    /// SS cannot know is that mid-reload "viable" must mean "loaded THIS INSTANT"
-    /// (the core patch's axis 3 deliberately counts reloadable-from-inventory guns
-    /// as viable — including the very gun being reloaded), so for the one call a
-    /// scope hides every ranged gun without rounds ready to fire, the same
-    /// call-lifetime pattern the core patch's P03 uses for dry guns. Nothing here
-    /// enumerates or re-implements a filter; SS growing a new one is inherited.
+    /// Patches colonist behavior so that a colonist mid-reload of the gun in
+    /// their hands swaps to a loaded carried if a hostile is in effective range.
     /// </summary>
     public class ReloadAbortComponent : GameComponent
     {
@@ -52,8 +24,7 @@ namespace CESSCompatTactics.Features
 
         public ReloadAbortComponent(Game game)
         {
-            // Constructed once per new-or-loaded game: the marker's stamps do not
-            // survive the transition (see PlayerReloadMarker.Reset).
+            // Constructed once per new-or-loaded game.
             PlayerReloadMarker.Reset();
         }
 
@@ -67,8 +38,7 @@ namespace CESSCompatTactics.Features
             {
                 return;
             }
-            // Every loaded map, not just the watched one — whether the feature
-            // protects a pawn must not depend on where the camera is (T3-10).
+            // Every loaded map, not just the watched one..
             foreach (Map map in Find.Maps)
             {
                 Tick(map);
@@ -101,13 +71,12 @@ namespace CESSCompatTactics.Features
 
         private static void TryAbort(Pawn pawn)
         {
-            // ONLY reloads of the gun in the pawn's hands (T3-1).
+            // ONLY reloads of the gun in the pawn's hands.
             if (pawn.CurJob?.targetB.Thing != pawn.equipment?.Primary || pawn.equipment?.Primary == null)
             {
                 return;
             }
-            // A forced weapon mid-reload stays put: every SS auto-swap respects the
-            // player's forced flag, and this abort is no exception (T3-5).
+            // A forced weapon mid-reload stays put.
             if (CompSidearmMemory.GetMemoryCompForPawn(pawn, fillExistingIfCreating: false)
                     ?.IsCurrentWeaponForced(alsoCountPreferredOrDefault: false) ?? false)
             {
@@ -124,11 +93,9 @@ namespace CESSCompatTactics.Features
                 maxDist: maxRange);
             if (target == null)
             {
-                return; // not threatened — finish the reload in peace
+                return; // not threatened - finish the reload in peace
             }
 
-            // SS's own selection, with SS's own argument conventions (the same shape
-            // its warmup auto-switch uses) and the loaded-this-instant scope open.
             bool mechTarget = (target as Pawn)?.RaceProps?.IsMechanoid ?? false;
             bool skipDangerous = pawn.IsColonistPlayerControlled
                                  && PeteTimesSix.SimpleSidearms.SimpleSidearms.Settings.SkipDangerousWeapons;
@@ -151,22 +118,15 @@ namespace CESSCompatTactics.Features
             }
             if (winner == null || dps <= 0f)
             {
-                return; // nothing loaded reaches this threat — keep reloading
+                return; // nothing loaded reaches this threat - keep reloading
             }
 
-            // Mirror the core patch's explicit-swap semantics (axis 5): end the reload
-            // cleanly FIRST — its guard blocks SS-side swaps while the job runs.
-            // startNewJob:false, deliberately: the default restarts the think tree
-            // synchronously INSIDE this call, and whatever it hands the pawn runs
-            // before the equip below — the swap must land on a jobless pawn.
+            // Mirror the core patch's swap semantics: end the reload cleanly first.
             pawn.jobs.EndCurrentJob(JobCondition.InterruptForced, startNewJob: false);
             WeaponAssingment.equipSpecificWeaponFromInventory(pawn, winner, dropCurrent: false, intentionalDrop: false);
         }
 
-        /// <summary>See the header: playerForced alone cannot separate the gizmo
-        /// from CE's ran-dry auto-reload — only a marker-tagged job is the
-        /// player's. No marker installed → every forced job is (conservatively)
-        /// the player's.</summary>
+        /// <summary>Only a marker-tagged job is the player's.</summary>
         private static bool IsPlayerOrderedReload(Pawn pawn)
         {
             if (!pawn.CurJob.playerForced)
@@ -185,10 +145,9 @@ namespace CESSCompatTactics.Features
             CompAmmoUser user = weapon.TryGetComp<CompAmmoUser>();
             if (user == null || !user.UseAmmo)
             {
-                return true; // no CE ammo concept — always usable
+                return true; // no CE ammo concept - always usable
             }
-            // Loaded THIS INSTANT: rounds in the magazine, or for magazine-less
-            // weapons, rounds on hand to fire from directly.
+            // Loaded THIS INSTANT: rounds in the magazine or on hand.
             return user.HasMagazine ? user.CurMagCount > 0 : user.HasAmmo;
         }
 
@@ -215,13 +174,7 @@ namespace CESSCompatTactics.Features
     }
 
     /// <summary>
-    /// The reload GIZMO's fingerprint: CompAmmoUser.SyncedTryStartReload is the one
-    /// entry only the player's command reaches (CE's automatic ran-dry reload calls
-    /// TryStartReload directly). The prefix stamps the wielder and tick; the reload
-    /// job starts synchronously inside the same call, so its startTick equals the
-    /// stamp — that equality IS "the player ordered this one" (T4-2). Multiplayer's
-    /// sync layer defers the inner call, but this module targets single-player,
-    /// where the path is synchronous.
+    /// The reload GIZMO's fingerprint: CompAmmoUser.SyncedTryStartReload is the entry.
     /// </summary>
     [HarmonyPatch(typeof(CompAmmoUser), "SyncedTryStartReload", new Type[0])]
     public static class CompAmmoUser_SyncedTryStartReload_Patch
@@ -254,13 +207,7 @@ namespace CESSCompatTactics.Features
             }
         }
 
-        /// <summary>Prepare runs BEFORE the prefix is applied, and application can
-        /// still throw (a co-loaded mod's broken patch on the same method fails the
-        /// whole patch merge) — without this, Installed stayed true with no prefix
-        /// installed, silently inverting the documented conservative degrade into
-        /// "every player-forced reload is abortable" (T5-A). The exception is
-        /// returned, not swallowed, so Bootstrap's per-class accounting still logs
-        /// the failure.</summary>
+        /// <summary>Without this, Installed stayed true with no prefix installed.</summary>
         [HarmonyCleanup]
         public static Exception Cleanup(Exception ex)
         {
@@ -273,16 +220,7 @@ namespace CESSCompatTactics.Features
     }
 
     /// <summary>
-    /// The under-barrel MODE SWITCH is the fourth reload entry and it is a player
-    /// command too: CompUnderBarrel.SwitchToUB / SwithToB (sic — upstream's own
-    /// spelling) are gizmo-invoked and end in CompAmmo.TryStartReload() when the
-    /// launcher needs loading, which stamps playerForced like the ran-dry auto
-    /// path. Unstamped, the abort would override an explicit "use the launcher
-    /// now" (T5-E). Same marker join as the gizmo: the switch ends any running
-    /// reload job and starts the new one inside the same call, so the stamp
-    /// lands at-or-before its startTick. These classes never touch
-    /// PlayerReloadMarker.Installed — if CE reshapes CompUnderBarrel, only the
-    /// switch-reload protection is lost, and the guard names exactly that.
+    /// Also patch the under-barrel MODE SWITCH reload entry.
     /// </summary>
     [HarmonyPatch(typeof(CompUnderBarrel), nameof(CompUnderBarrel.SwitchToUB), new Type[0])]
     public static class CompUnderBarrel_SwitchToUB_Patch
@@ -352,22 +290,13 @@ namespace CESSCompatTactics.Features
 
         internal static bool WasPlayerOrdered(Pawn pawn, int jobStartTick)
         {
-            // AT-OR-AFTER, not equality: re-clicking the gizmo mid-reload re-stamps
-            // while CE's TryStartReload early-outs on the already-running job — the
-            // stamp then postdates startTick, and exact equality would strip the very
-            // protection the click expressed (T5-C). A stamp can only postdate a
-            // running reload's start if the player ordered a reload DURING it, which
-            // blesses that job; a stamp older than the start belongs to a previous
-            // job and correctly fails.
+            // A stamp can only postdate a running reload's start if the player
+            // ordered a reload DURING it, which blesses that job; a stamp older
+            // than the start belongs to a previous job and correctly fails.
             return stamps.TryGetValue(pawn, out int tick) && tick >= jobStartTick;
         }
 
-        /// <summary>New game or loaded save: stamps are session-plumbing keyed on
-        /// object identity and tick clocks that both reset across loads — stale
-        /// entries could otherwise pin dead pawn graphs and, after loading an
-        /// earlier-tick save, sit unprunable behind the tick-delta test (T5-B).
-        /// Cost of the wipe: a reload that was mid-flight at save time degrades to
-        /// flag-only protection for that one job.</summary>
+        /// <summary>Clear on session reset.</summary>
         internal static void Reset()
         {
             stamps.Clear();
@@ -381,10 +310,7 @@ namespace CESSCompatTactics.Features
     }
 
     /// <summary>
-    /// While the reload-abort's ask is in flight, the pawn's carried-weapon list
-    /// shows only ranged guns with rounds ready to fire — the mid-reload meaning of
-    /// "viable". The same seam the core patch's P03 uses to hide dry guns during
-    /// its re-run; both postfixes filter, so their order does not matter.
+    /// Removes unloaded guns from switch candidates.
     /// </summary>
     [HarmonyPatch(typeof(Extensions), nameof(Extensions.GetCarriedWeapons),
                   new[] { typeof(Pawn), typeof(bool), typeof(bool) })]

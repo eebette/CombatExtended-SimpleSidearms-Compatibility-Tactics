@@ -9,23 +9,7 @@ using Verse;
 namespace CESSCompatTactics.Features
 {
     /// <summary>
-    /// Feature 7: drafted sidearm top-off. CE's JobGiver_CheckReload already tops off
-    /// EVERY inventory magazine while a pawn is undrafted, and opportunistically
-    /// reloads the PRIMARY while drafted (during a lull: post-fight cooldown elapsed,
-    /// no hostile within the safe distance). The one gap is a drafted pawn's
-    /// sidearms — they stay empty until undraft. This postfix extends CE's own
-    /// drafted lull-reload from "primary" to "primary and sidearms": same trigger,
-    /// same scheduling (CE's think-tree node calls DoReloadCheck; a true result
-    /// becomes CE's own unload → SelectedAmmo sync → TryMakeReloadJob flow, which
-    /// already handles inventory guns on the undrafted path).
-    ///
-    /// Every gate is CE's, re-read per sidearm rather than invented:
-    /// IsOpportunisticReloadActive requires a Wielder, which an inventory gun never
-    /// has, so its three real conditions are read individually (mode not Off,
-    /// MagSize > 1, no OpportunisticReloadDisabled tag). The per-gun reload
-    /// threshold (TryReloadOn, default 0 = only when empty), the post-fight
-    /// cooldown, and the safe-distance hostile scan mirror CE's drafted-primary
-    /// path exactly, including its one-round availability rule.
+    /// Drafted sidearm top-off. CE only reloads the primary while drafted.
     /// </summary>
     [HarmonyPatch(typeof(JobGiver_CheckReload), "DoReloadCheck",
                   new[] { typeof(Pawn), typeof(ThingWithComps), typeof(AmmoDef) },
@@ -35,11 +19,11 @@ namespace CESSCompatTactics.Features
         public static bool Prepare()
         {
             // The gates below re-read CE's drafted-path conditions (values live,
-            // SHAPES copied — F07 ruling: postfix + fingerprint). Any change to the
+            // SHAPES copied - the drafted-top-off ruling: postfix + fingerprint). Any change to the
             // upstream method turns from silent divergence into a loud re-verify.
             UpstreamFingerprint.Verify(typeof(JobGiver_CheckReload), "DoReloadCheck",
                 UpstreamFingerprint.DoReloadCheckHash,
-                "the drafted-lull gate conditions F07 re-reads per sidearm");
+                "the drafted-lull gate conditions the drafted top-off re-reads per sidearm");
             return PatchGuard.Require(typeof(JobGiver_CheckReload), "DoReloadCheck",
                 new[] { typeof(Pawn), typeof(ThingWithComps).MakeByRefType(), typeof(AmmoDef).MakeByRefType() },
                 "drafted pawns will not top off sidearm magazines during combat lulls.");
@@ -66,7 +50,7 @@ namespace CESSCompatTactics.Features
         {
             if (__result || !TacticsMod.Settings.draftedSidearmReload)
             {
-                return; // CE found its own reload — never compete with it
+                return; // CE found its own reload - never compete with it
             }
             if (pawn == null || !pawn.Drafted || pawn.Downed)
             {
@@ -88,14 +72,12 @@ namespace CESSCompatTactics.Features
                 {
                     continue;
                 }
-                // IsOpportunisticReloadActive minus the Wielder requirement — an
-                // inventory gun has a holder, not a wielder.
+                // IsOpportunisticReloadActive minus the Wielder requirement.
                 if (comp.MagSize <= 1 || (gun.def.weaponTags?.Contains("OpportunisticReloadDisabled") ?? false))
                 {
                     continue;
                 }
-                // CE's drafted threshold semantics: only guns at or below their
-                // TryReloadOn mark (default 0 — empty) are worth a lull reload.
+                // From CE: only guns at or below their TryReloadOn mark are worth a lull reload.
                 if (comp.CurMagCount > comp.TryReloadOn || comp.CurMagCount >= comp.MagSize)
                 {
                     continue;

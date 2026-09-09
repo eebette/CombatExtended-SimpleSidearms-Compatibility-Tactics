@@ -10,40 +10,15 @@ using Verse;
 namespace CESSCompatTactics.Features
 {
     /// <summary>
-    /// Features 4 + 5 share SS's ranged selection pass — and they now live INSIDE it
-    /// instead of re-running it. The first version's postfix re-enumerated candidates
-    /// through a hand-copied filter chain, which had already drifted from SS's real
-    /// one (it missed the biocode check, the VFE-shield and Tacticowl exclusions,
-    /// and the per-weapon min/max range window): the re-rank could crown a weapon
-    /// SS itself had refused. This rework never enumerates anything.
-    ///
-    /// Mechanics, three small patches that compose:
-    ///  - A prefix on findBestRangedWeapon opens a SCOPE carrying the target (the
-    ///    core patch's P01 retrieval-scope pattern), and a finalizer closes it —
-    ///    finalizers run even when the original throws.
-    ///  - A postfix on the two scoring entry points SS uses inside that pass
-    ///    (RangedDPS with a target, RangedDPSAverage without) multiplies the
-    ///    outgoing score by the loaded-ammo-vs-target factor (feature 5,
-    ///    TargetScoring.RangedMultiplier) and RECORDS the (weapon, raw, adjusted)
-    ///    pair. SS's own loop, filters, and comparison then pick with adjusted
-    ///    numbers natively. The core patch's P02 cache is untouched: its prefix
-    ///    stores before this postfix rewrites the one outgoing value.
-    ///  - A postfix on findBestRangedWeapon applies the ammo-depth tiebreak
-    ///    (feature 4) and the all-hopeless defer from the RECORDED pairs — no
-    ///    second scan, ever.
-    ///
-    /// Defer: when every adjusted score is zero against this target (centipede
-    /// plate vs everything in a colonist's pocket), re-ranking zeros is noise —
-    /// the recorded RAW ranking stands in, which is exactly SS's own target-blind
-    /// pick. SS grows a new filter tomorrow → inherited automatically.
-    /// NO SelectedAmmo writes, no state anywhere but the call-lifetime scope.
+    /// Call-lifetime scope for one findBestRangedWeapon pass. The ammo-aware hooks run inside
+    /// SS's own selection, so they need a shared place to carry the target in and collect each
+    /// candidate's score while it runs.
     /// </summary>
     internal static class RangedSelectionScope
     {
         internal static Pawn Target;
         // modeled=false: the multiplier could not judge this weapon (no CE
-        // projectile) — its score is untouched and it sits OUT of all-hopeless
-        // reasoning (convergence C5).
+        // projectile).
         internal static List<(ThingWithComps weapon, float raw, float adjusted, bool modeled)> Records;
 
         internal static bool Active => Records != null;
@@ -82,13 +57,10 @@ namespace CESSCompatTactics.Features
             }
         }
 
-        // BEFORE the core patch's P03: when SS's pick is truly dry, P03 re-runs the
-        // selection (that inner call gets this postfix in full) and overwrites
-        // __result — running after it would apply the defer/tiebreak a SECOND time
-        // to the outer records with the floor re-anchored at the already-moved
-        // score, drifting the tie window toward (1−ε)² (T5-D). Running first, the
-        // overwrite discards this postfix's outer work and the composition is
-        // single-application by construction.
+        /// <summary>
+        /// Patches findBestRangedWeapon's result to break near-ties by ammo depth and defer to
+        /// SS's raw pick when nothing scores against the target - both from the recorded scores.
+        /// </summary>
         [HarmonyBefore(CESimpleSidearmsCompat.Bootstrap.HarmonyId)]
         [HarmonyPostfix]
         public static void Postfix(ref (ThingWithComps weapon, float dps, float averageSpeed) __result)
@@ -130,27 +102,19 @@ namespace CESSCompatTactics.Features
             }
             TacticsSettings settings = TacticsMod.Settings;
 
-            // All-hopeless defer: every MODELED score zeroed against this target
-            // (unmodelable weapons neither trigger nor block it — convergence C5).
-            // The recorded raw ranking IS SS's target-blind pick — restore it.
+            // Every MODELED score zeroed against this target, so restore the raw ranking.
             bool deferred = false;
             if (RangedSelectionScope.Target != null
                 && records.Any(r => r.modeled)
                 && records.Where(r => r.modeled).All(r => r.adjusted <= 0f)
                 && records.Any(r => r.raw > 0f))
             {
-                // Only guns that can actually fire: records include dry weapons at
-                // full paper score, and the compat patch's dry-pick correction (P03)
-                // has already run — resurrecting a dry gun here handed pawns an
-                // empty weapon against the hardest targets (T3-4).
+                // Only guns that can actually fire.
                 var usable = records.Where(r => HasRounds(r.weapon) && r.raw > 0f).ToList();
                 if (usable.Count > 0)
                 {
                     var bestRaw = usable.MaxBy(r => r.raw);
-                    // The ADJUSTED score (zero), not the raw one: trySwap compares
-                    // this against an in-scope incumbent also scored ~0 — a raw
-                    // score here re-rigged that comparison and livelocked the
-                    // warmup (phantom swap, job reset, never fires — convergence C1).
+                    // The ADJUSTED score (zero).
                     __result = (bestRaw.weapon, bestRaw.adjusted, __result.averageSpeed);
                     deferred = true;
                 }
@@ -187,10 +151,6 @@ namespace CESSCompatTactics.Features
             }
             if (best.weapon != __result.weapon)
             {
-                // The RAW score ranks the tie window when deferred, but the RETURNED
-                // score must stay in the defer's currency: writing raw here re-armed
-                // C1's warmup livelock one branch below the fixed line whenever a
-                // deeper twin sat inside the window (T4-1).
                 __result = (best.weapon, deferred ? best.adjusted : score(best), __result.averageSpeed);
             }
         }
@@ -202,11 +162,7 @@ namespace CESSCompatTactics.Features
             return user == null || !user.UseAmmo || user.HasAmmoOrMagazine;
         }
 
-        /// <summary>Rounds on hand: magazine + carried spares; non-CE weapons never
-        /// run dry — effectively infinite depth. CurAmmoSet, not Props.ammoSet
-        /// (variable-ammo guns override the set — the dependency's own documented
-        /// rule), counted through CE's own AmmoCountOfDef accessor rather than raw
-        /// container arithmetic (convergence C4).</summary>
+        /// <summary>Rounds on hand: magazine + carried spares.</summary>
         private static long AmmoDepth(ThingWithComps weapon)
         {
             CompAmmoUser user = weapon.TryGetComp<CompAmmoUser>();
@@ -228,14 +184,8 @@ namespace CESSCompatTactics.Features
     }
 
     /// <summary>
-    /// T3-3: SS's warmup auto-switch (trySwapToMoreAccurateRangedWeapon) scored the
-    /// CHALLENGER inside the selection scope (armor-adjusted, ≤ raw) but re-scored
-    /// the INCUMBENT after the scope closed (raw) — a rigged comparison the
-    /// challenger could essentially never win, so the feature could veto swaps but
-    /// never produce the AP-rifle draw it exists for. Opening the scope across the
-    /// whole caller makes line-378's incumbent score adjusted too: symmetric
-    /// comparison, SS's own anti-oscillation margin preserved. The nested
-    /// findBestRangedWeapon call stacks its own scope via __state as usual.
+    /// Patches SS's warmup auto-switch (trySwapToMoreAccurateRangedWeapon) to open the selection
+    /// scope across the whole call so the held gun is scored target-adjusted like the candidate.
     /// </summary>
     [HarmonyPatch(typeof(WeaponAssingment), nameof(WeaponAssingment.trySwapToMoreAccurateRangedWeapon),
                   new[] { typeof(Pawn), typeof(LocalTargetInfo), typeof(bool), typeof(bool), typeof(bool), typeof(bool) })]
@@ -333,7 +283,7 @@ namespace CESSCompatTactics.Features
         {
             if (!RangedSelectionScope.Active)
             {
-                return; // gizmos, tooltips, F01's own scan: untouched
+                return; // gizmos, tooltips, reload-abort's own scan: untouched
             }
             float raw = __result;
             float adjusted = raw;
@@ -344,8 +294,7 @@ namespace CESSCompatTactics.Features
                 adjusted = raw * factor;
                 modeled = true;
             }
-            // An unmodelable weapon (no CE projectile) keeps its untouched score —
-            // the same mixing SS does with the feature off (convergence C5).
+            // An unmodelable weapon (no CE projectile) keeps its untouched score.
             RangedSelectionScope.Records.Add((weapon, raw, adjusted, modeled));
             __result = adjusted;
         }

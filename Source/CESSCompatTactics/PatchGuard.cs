@@ -5,22 +5,14 @@ using Verse;
 namespace CESSCompatTactics
 {
     /// <summary>
-    /// Failure doctrine for every patch class in this assembly, ported from the core
-    /// compat patch (see its PatchGuard.cs for the full rationale), in three layers:
+    /// Failure doctrine for every patch class here - so a broken assumption turns a feature off,
+    /// never crashes:
     ///
-    /// 1. Attribute pins — every [HarmonyPatch] names its target's full parameter list,
-    ///    so an upstream overload cannot make the attribute ambiguous.
-    ///
-    /// 2. Prepare guards — each class re-resolves its pinned target and skips itself
-    ///    with a named, player-readable consequence when the member is gone. One missing
-    ///    member costs exactly its own feature.
-    ///
-    /// 3. Outer/inner method splits — patch bodies reference CE and SS members far
-    ///    beyond the patched method, and the JIT resolves those when the body first
-    ///    compiles, where no in-method try/catch can see a failure. Each patch entry is
-    ///    a thin outer method calling the real body in a NoInlining inner inside
-    ///    try/catch: upstream drift surfaces as one named error and the original keeps
-    ///    running.
+    /// 1. Attribute pins - an exact target signature; a moved/renamed target won't bind.
+    /// 2. Prepare guards (Require/RequireType) - confirm the target + depended-on types exist,
+    ///    else log the gameplay consequence and skip the class.
+    /// 3. Thin-outer/NoInlining-inner split - the outer try/catch keeps a throw out of the game
+    ///    (Log.ErrorOnce) and falls back to upstream behavior.
     /// </summary>
     internal static class PatchGuard
     {
@@ -32,7 +24,7 @@ namespace CESSCompatTactics
             {
                 return true;
             }
-            Log.Error($"{LogPrefix}{type.Name}.{method} not found — {consequence} "
+            Log.Error($"{LogPrefix}{type.Name}.{method} not found - {consequence} "
                       + "The mod that declares it probably moved it.");
             return false;
         }

@@ -11,16 +11,7 @@ using static PeteTimesSix.SimpleSidearms.Utilities.Enums;
 namespace CESSCompatTactics.Features
 {
     /// <summary>
-    /// Feature 3: forced-weapon dry fall-through. SS's forced-weapon branches run
-    /// before best-weapon logic with zero ammo checks (impossible state in vanilla).
-    /// While a forced weapon is TRULY dry — empty magazine and nothing to reload
-    /// from inventory — temporarily hide the forced setting from SS's selection so
-    /// it falls through to normal preference logic.
-    ///
-    /// GUARD (bypass, never clear): the ForcedWeapon flags are SS-owned player
-    /// state. They are nulled only for the duration of the wrapped call and always
-    /// restored in finally — the moment ammo exists again the forced weapon
-    /// resumes on its own.
+    /// Patches SS to allow switches off of a forced gun the pawn has no ammo for.
     /// </summary>
     [HarmonyPatch(typeof(WeaponAssingment), nameof(WeaponAssingment.equipBestWeaponFromInventoryByPreference),
                   new[] { typeof(Pawn), typeof(DroppingModeEnum), typeof(PrimaryWeaponMode?), typeof(Pawn) })]
@@ -51,37 +42,23 @@ namespace CESSCompatTactics.Features
             HideDryForcedFlags(pawn, ref __state);
         }
 
-        // A FINALIZER, not a postfix: postfixes are skipped when the original (or a
-        // later prefix) throws, and the state being restored here is the PLAYER'S
-        // forced-weapon setting — hidden for the duration of one call under the
-        // "bypass, never clear" guard. A throw leaving it nulled would be this
-        // feature destroying the exact intent it exists to respect.
         [HarmonyFinalizer]
         public static void Finalizer((CompSidearmMemory memory, ThingDefStuffDefPair? forced, ThingDefStuffDefPair? forcedDrafted)? __state)
         {
             RestoreForcedFlags(__state);
         }
 
-        /// <summary>Empty magazine AND no compatible ammo anywhere on the pawn.
-        /// One refinement (T3-11): while a reload job for this very gun is in
-        /// flight, backpack ammo does NOT count as "not dry" — the magazine is
-        /// still at zero, and letting the forced branch re-equip it mid-refill
-        /// killed the refill and put an empty gun in the pawn's hands. The forced
-        /// weapon resumes the moment the refill lands.</summary>
+        /// <summary>Empty magazine AND no compatible ammo anywhere on the pawn.</summary>
         // (see also ForcedWeaponLesson_Patch below)
         internal static bool IsTrulyDry(Pawn pawn, ThingDefStuffDefPair pair)
         {
-            // The forced flag is PAIR-level; dryness must be too. Judging the pair
-            // by whichever carried instance enumerates first let a drained twin
-            // shadow a loaded one (hiding a forced gun SS could have equipped) and
-            // let the refill-in-flight clause compare against the wrong copy
-            // (convergence C2). Aggregate over every carried instance.
+            // The forced flag is PAIR-level; dryness must be too.
             var instances = pawn.GetCarriedWeapons(includeEquipped: true, includeTools: true)
                 .Where(w => w.toThingDefStuffDefPair() == pair)
                 .ToList();
             if (instances.Count == 0)
             {
-                return false; // not carried — SS's own logic handles that case
+                return false; // not carried - SS's own logic handles that case
             }
             bool anyCeGun = false;
             bool anyLoaded = false;
@@ -92,7 +69,7 @@ namespace CESSCompatTactics.Features
                 CompAmmoUser user = instance.TryGetComp<CompAmmoUser>();
                 if (user == null || !user.UseAmmo)
                 {
-                    return false; // a no-ammo-concept copy exists — can never be dry
+                    return false; // a no-ammo-concept copy exists - can never be dry
                 }
                 anyCeGun = true;
                 if (user.HasMagazine && user.CurMagCount > 0)
@@ -111,13 +88,12 @@ namespace CESSCompatTactics.Features
             }
             if (!anyCeGun || anyLoaded)
             {
-                return false; // a loaded copy exists — SS's forced branch can equip it
+                return false; // a loaded copy exists - SS's forced branch can equip it
             }
             return !anyAmmo || anyRefill;
         }
 
-        /// <summary>Shared hide step for both entry points: stash and null the
-        /// truly-dry forced flags; the finalizer restores from __state.</summary>
+        /// <summary>Shared hide step for both entry points.</summary>
         internal static void HideDryForcedFlags(Pawn pawn,
             ref (CompSidearmMemory memory, ThingDefStuffDefPair? forced, ThingDefStuffDefPair? forcedDrafted)? __state)
         {
@@ -169,12 +145,8 @@ namespace CESSCompatTactics.Features
     }
 
     /// <summary>
-    /// T3-6: the melee-attacked reflex (doCQC → tryCQCWeaponSwapToMelee) checks
-    /// "is the current weapon forced?" INSIDE SS, one call above everything the
-    /// class above hides — so the fall-through never covered the one moment the
-    /// pawn is being stabbed. Same hide-and-always-restore discipline on that
-    /// entry point gives the toggle full coverage: a truly-dry forced gun stops
-    /// blocking the knife draw, and the flags come back untouched either way.
+    /// Patches SS's melee-attacked reflex (tryCQCWeaponSwapToMelee) to hide a dry forced
+    /// weapon's flags so it stops blocking the knife draw.
     /// </summary>
     [HarmonyPatch(typeof(WeaponAssingment), nameof(WeaponAssingment.tryCQCWeaponSwapToMelee),
                   new[] { typeof(Pawn), typeof(Pawn), typeof(DroppingModeEnum) })]
@@ -207,10 +179,8 @@ namespace CESSCompatTactics.Features
     }
 
     /// <summary>
-    /// Learning Helper note at the moment the ambiguity starts existing for the
-    /// player: the first time they FORCE a weapon, the vanilla lesson system
-    /// explains the two readings ("hold no matter what" vs "prefer while usable")
-    /// and where the toggle lives. Vanilla's own teaching surface — no popups.
+    /// Learning Helper note informing the player of the default fall-through behavior the
+    /// first time a weapon is forced.
     /// </summary>
     [HarmonyPatch(typeof(CompSidearmMemory), nameof(CompSidearmMemory.SetWeaponAsForced),
                   new[] { typeof(ThingDefStuffDefPair), typeof(bool) })]
