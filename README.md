@@ -1,5 +1,8 @@
 # CombatExtended-SimpleSidearms Compatibility Module - Tactics
 
+[![Latest Release](https://img.shields.io/github/v/release/eebette/CombatExtended-SimpleSidearms-Compatibility-Tactics?label=Latest%20Release)](https://github.com/eebette/CombatExtended-SimpleSidearms-Compatibility-Tactics/releases)
+<!-- Steam Workshop badge goes here at publish -->
+
 [![Combat Extended Compatible](Media/Badge_CE_compatible.png)](https://steamcommunity.com/sharedfiles/filedetails/?id=2890901044)
 ![CE + Simple Sidearms Compatibility Suite](Media/Badge_Suite.png)
 ![CE + Simple Sidearms Tactics Module](Media/Badge_Tactics.png)
