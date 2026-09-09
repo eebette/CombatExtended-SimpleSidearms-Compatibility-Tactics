@@ -77,6 +77,26 @@ outside of this community space. Thank you.
 (`-p:CompatPatchDir=...` to override), because this module binds to its public surface (`CompatUtil`, the shared Harmony
 id). So build the core patch first. CI cannot build this repo; releases are manual.
 
+## Testing
+
+Automated in-game acceptance tests, run with Combat Extended, Simple Sidearms, and the compatibility patch loaded
+(the harness unpatches the sibling Loadouts module so scenarios stay isolated):
+
+```bash
+./test/run-tact-assert.sh tact1 TACT-1-reload-abort
+```
+
+Six scenarios (pass the name and its save to `run-tact-assert.sh`):
+
+- **tact1** - reload-abort: swap off a reload to a loaded carried weapon when threatened.
+- **tact2** - forced-dry fall-through: a forced weapon that is out of ammo falls back to normal selection.
+- **tact3** - ammo-depth tiebreak: near-equal guns break to the deeper ammo reserve.
+- **tact4** - target-aware ammo scoring: pick by loaded-ammo effectiveness against the target's armor.
+- **tact5** - armor-aware melee: blunt vs armor, fast blades vs flesh.
+- **tact6** - drafted sidearm top-off: refill empty sidearm magazines during a combat lull.
+
+`run-tact-isolated.sh` runs every phase against a fresh save. Details and recorded passes: [`TESTPLAN.md`](TESTPLAN.md).
+
 ## License
 
 [MIT](LICENSE) - code, build files, and docs.
