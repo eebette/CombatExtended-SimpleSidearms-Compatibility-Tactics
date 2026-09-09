@@ -50,7 +50,7 @@ namespace CESSCompatTactics
             listing.CheckboxLabeled("Allow weapon switch when threatened while reloading", ref Settings.reloadAbort,
                 "A pawn mid-reload with a hostile in effective range swaps to a loaded carried weapon instead of finishing the reload. Player-ordered reloads are never interrupted.");
             listing.CheckboxLabeled("Allow weapon switch on forced weapons if no ammo available.", ref Settings.forcedDryFallthrough,
-                "OFF (default): hold the forced weapon no matter what. ON: prefer it while usable, fall back to normal selection while it is out of ammo. The forced setting isn't never cleared and resumes the moment ammo is available.");
+                "OFF (default): hold the forced weapon no matter what. ON: prefer it while usable, fall back to normal selection while it is out of ammo. The forced setting is never cleared and resumes the moment ammo is available.");
             listing.CheckboxLabeled("Enable tiebreaker for sidearm choice based on amount of ammo for each gun in inventory", ref Settings.ammoDepthTiebreak,
                 "When two carried guns rank within the margin below, prefer the one with deeper ammo reserves (magazine + carried spares).");
             listing.Label($"Tiebreak margin: {Settings.tiebreakEpsilonPct}% of the top score");

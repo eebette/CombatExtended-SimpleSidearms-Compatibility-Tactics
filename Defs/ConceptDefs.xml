@@ -5,6 +5,6 @@
         <label>Forced weapons and empty guns</label>
         <priority>60</priority>
         <needsOpportunity>true</needsOpportunity>
-        <helpText>You forced a pawn to use a specific weapon. This pawn won't switch to its sidearm(s) when it runs out of ammo!\n\nTo override this and allow sidearms swaps on forced weapons when no ammo is available:\n\Go to Mod Settings -> CE+SS Tactics -> "Forced-weapon dry fall-through".</helpText>
+        <helpText>You forced a pawn to use a specific weapon. This pawn won't switch to its sidearm(s) when it runs out of ammo!\n\nTo override this and allow sidearms swaps on forced weapons when no ammo is available:\n\nGo to Mod Settings -> CE+SS Tactics -> "Forced-weapon dry fall-through".</helpText>
     </ConceptDef>
 </Defs>
