@@ -30,7 +30,7 @@ def main(path):
     if not data.get("passed", False):
         reasons.append("runner reported passed=false")
     if not phases:
-        reasons.append("no phases ran — an empty suite is not a pass")
+        reasons.append("no phases ran - an empty suite is not a pass")
 
     unreached = [p for p in phases if not p.get("reached", False)]
     if unreached:
@@ -42,7 +42,7 @@ def main(path):
     invalid = [p for p in phases if p.get("invalid", False)]
     if invalid:
         reasons.append(
-            f"{len(invalid)} phase(s) INVALID — preconditions never held, so they tested "
+            f"{len(invalid)} phase(s) INVALID - preconditions never held, so they tested "
             "nothing: " + ", ".join(p.get("label", "?") for p in invalid)
         )
 
@@ -92,7 +92,7 @@ def main(path):
 
 def merge(paths):
     """One result file per phase, from an isolated sweep. A phase missing entirely is a
-    failure — it means that process never wrote results."""
+    failure - it means that process never wrote results."""
     merged = {"scenario": "", "passed": True, "phases": []}
     for path in sorted(paths):
         try:

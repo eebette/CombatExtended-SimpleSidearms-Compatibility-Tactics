@@ -82,7 +82,7 @@ namespace CESSTacticsTestStaging
             SpawnMeleeRaider(map, pawn.Position, distance: 45);
         }
 
-        // Colonist with loaded revolver (NO spares — sole .44 user) and loaded pistol
+        // Colonist with loaded revolver (NO spares - sole .44 user) and loaded pistol
         // sidearm (+spares). Forced-weapon flag is set by the runner at load.
         private void Stage2_ForcedDry(Map map)
         {

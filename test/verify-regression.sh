@@ -2,7 +2,7 @@
 # A regression test that has never been seen to fail is an assertion, not a test.
 #
 # This makes the A/B mechanical: remove the fix, prove the named phase FAILS
-# (not VOID — a setup problem proves nothing about the fix), restore it, prove
+# (not VOID - a setup problem proves nothing about the fix), restore it, prove
 # the scenario passes. Run it BEFORE committing a fix+test pair (default mode:
 # the uncommitted fix is stashed for run A). For an already-committed fix, name
 # the pre-fix revision:
@@ -35,7 +35,7 @@ AB_A="$HOME/Projects/CombatExtended-SimpleSidearms Compatibility Patch/test/Save
 
 for f in "${FILES[@]}"; do
     case "$f" in Assemblies/*|*/Assemblies/*)
-        echo "!! $f is a build artifact — name source files only; the script rebuilds" >&2
+        echo "!! $f is a build artifact - name source files only; the script rebuilds" >&2
         exit 2 ;;
     esac
 done
@@ -66,7 +66,7 @@ for ph in d["phases"]:
                 return d == "not evaluated" or d.startswith("mutation threw")
             if gating and all(_unevaluated(c) for c in gating):
                 # failed with zero evaluated checks: setup/mutate threw before anything
-                # was observed — pins an API signature, not the semantics.
+                # was observed - pins an API signature, not the semantics.
                 print("unevaluated")
             else:
                 print("failed")
@@ -99,7 +99,7 @@ trap cleanup EXIT
 rm -f "$AB_A"
 if ! build; then
     cleanup; trap - EXIT
-    echo "!! A: the tree does not BUILD without the fix — the pair shares an API, so this" >&2
+    echo "!! A: the tree does not BUILD without the fix - the pair shares an API, so this" >&2
     echo "!! A/B pins the signature, not the semantics. Verify with an in-place scratch" >&2
     echo "!! mutation instead." >&2
     exit 1
@@ -107,25 +107,25 @@ fi
 run
 if [[ ! -f "$RESULT" ]]; then
     cleanup; trap - EXIT
-    echo "!! A: the run produced no result file (crash/timeout before WriteResults) —" >&2
+    echo "!! A: the run produced no result file (crash/timeout before WriteResults) -" >&2
     echo "!! nothing was observed; not evidence about the fix." >&2
     exit 1
 fi
 mv -f "$RESULT" "$AB_A"
 A=$(phase_state "$AB_A" || echo absent)
 cleanup; trap - EXIT
-# The A leg built the mod from the reverted source; rebuild on EVERY path out —
-# including a crashed run — or the tree keeps a stale DLL that poisons the next build.
+# The A leg built the mod from the reverted source; rebuild on EVERY path out -
+# including a crashed run - or the tree keeps a stale DLL that poisons the next build.
 build
 
 case "$A" in
-    failed)  echo "   A: failed — the test detects the regression" ;;
+    failed)  echo "   A: failed - the test detects the regression" ;;
     unevaluated)
         echo "!! A: the phase failed before any check evaluated (setup/mutate threw on the" >&2
-        echo "!! old tree) — artifact evidence; it pins the signature, not the semantics." >&2
+        echo "!! old tree) - artifact evidence; it pins the signature, not the semantics." >&2
         exit 1 ;;
-    invalid) echo "!! A: VOID — the phase's setup broke without the fix; it proves nothing about it" >&2; exit 1 ;;
-    passed)  echo "!! A: PASSED without the fix — the test does not pin it" >&2; exit 1 ;;
+    invalid) echo "!! A: VOID - the phase's setup broke without the fix; it proves nothing about it" >&2; exit 1 ;;
+    passed)  echo "!! A: PASSED without the fix - the test does not pin it" >&2; exit 1 ;;
     *)       echo "!! A: phase '$PHASE' not found in results" >&2; exit 1 ;;
 esac
 
@@ -135,7 +135,7 @@ if [[ "$(phase_state)" != "passed" ]]; then
     echo "!! B: '$PHASE' is $(phase_state) with the fix in place" >&2
     exit 1
 fi
-# The named phase passing is not the promise — the scenario is. verdict.py sets
+# The named phase passing is not the promise - the scenario is. verdict.py sets
 # the exit code from the whole result, unreached phases included.
 if ! "$(dirname "$0")/verdict.py" "$RESULT" >/dev/null; then
     "$(dirname "$0")/verdict.py" "$RESULT" || true

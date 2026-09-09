@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Every phase in its own process against a freshly loaded save — proves each
+# Every phase in its own process against a freshly loaded save - proves each
 # phase stands alone. Slow by construction; a pre-release sweep.
 # Usage: ./test/run-tact-isolated.sh tact1 TACT-1-reload-abort
 set -euo pipefail

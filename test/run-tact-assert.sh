@@ -8,7 +8,7 @@ SAVE="${2:?save name}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 COMPAT="$HOME/Projects/CombatExtended-SimpleSidearms Compatibility Patch"
 RIMWORLD="$HOME/.local/share/Steam/steamapps/common/RimWorld/RimWorldLinux"
-# GS_WRAP: launch inside gamescope's nested compositor — immune to the desktop's
+# GS_WRAP: launch inside gamescope's nested compositor - immune to the desktop's
 # display state (owner gaming via Proton, mode-list churn, XF86VidMode crashes).
 GS=(gamescope -W 1600 -H 900 --)
 SAVEDATA="$COMPAT/test/SaveData"

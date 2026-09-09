@@ -86,8 +86,8 @@ namespace CESSTacticsTestStaging
         }
 
         /// <summary>
-        /// Diagnostics accounted for and decided not ours; anything else — any Error
-        /// from any mod, any Warning not listed — fails the phase it appeared in.
+        /// Diagnostics accounted for and decided not ours; anything else - any Error
+        /// from any mod, any Warning not listed - fails the phase it appeared in.
         /// </summary>
         private static readonly string[] ExpectedDiagnostics =
         {
@@ -210,7 +210,7 @@ namespace CESSTacticsTestStaging
                             ? new List<Phase> { phases[isolatedPhase] }
                             : new List<Phase>();
                         Log.Message($"[TactTest] Isolated run: phase {isolatedPhase} of {totalPhaseCount}"
-                                    + (phases.Count == 0 ? " — out of range." : $" ('{phases[0].label}')."));
+                                    + (phases.Count == 0 ? " - out of range." : $" ('{phases[0].label}')."));
                     }
                 }
                 catch (Exception e)
@@ -286,40 +286,32 @@ namespace CESSTacticsTestStaging
 
         private static void DisableLoadoutsModule()
         {
+            // The suite shares one ModsConfig, so the sibling Loadouts module loads during TACT
+            // runs and patches the same SS selection methods these scenarios test. Remove its
+            // patches by Harmony owner id — decoupled from Loadouts' internals, so a redesign
+            // there cannot silently contaminate (or falsely fail) the run.
+            const string loadoutsId = "eebette.CESimpleSidearmsCompat.Loadouts";
             try
             {
-                bool loadoutsActive = ModsConfig.IsActive("eebette.CESimpleSidearmsCompat.Loadouts")
-                    || Harmony.GetAllPatchedMethods().Any(m =>
-                        Harmony.GetPatchInfo(m)?.Owners
-                            .Any(o => o.Contains("CESimpleSidearmsCompat.Loadouts")) ?? false);
-                Type mod = GenTypes.GetTypeInAnyAssembly("CESimpleSidearmsCompat.Loadouts.LoadoutsMod");
-                object settings = mod?.GetProperty("Settings")?.GetValue(null);
-                if (settings == null)
+                if (!ModsConfig.IsActive(loadoutsId))
                 {
-                    if (loadoutsActive)
+                    return;
+                }
+                var neutralizer = new Harmony("tact-neutralize-loadouts");
+                int removed = 0;
+                foreach (var method in Harmony.GetAllPatchedMethods().ToList())
+                {
+                    if (Harmony.GetPatchInfo(method)?.Owners.Contains(loadoutsId) ?? false)
                     {
-                        // Silent return here means every TACT scenario runs with the
-                        // Loadouts projections active — fail loud so a rename breaks the
-                        // suite, not the results. (The pre-rename reflection did exactly
-                        // that silently until 2026-08-31.)
-                        Log.Error("[TactTest] Loadouts module is ACTIVE but its settings type was not "
-                                  + "found (renamed again?) — scenarios are contaminated by its patches.");
+                        neutralizer.Unpatch(method, HarmonyPatchType.All, loadoutsId);
+                        removed++;
                     }
-                    return;
                 }
-                System.Reflection.FieldInfo field = settings.GetType().GetField("loadoutWeaponsAsSidearms");
-                if (field == null)
-                {
-                    Log.Error("[TactTest] Loadouts settings found but 'loadoutWeaponsAsSidearms' is gone — "
-                              + "cannot switch the module off; scenarios are contaminated by its patches.");
-                    return;
-                }
-                field.SetValue(settings, false);
-                Log.Message("[TactTest] Loadouts module switched off (in-memory) for this run.");
+                Log.Message($"[TactTest] Loadouts module neutralized for this run: {removed} patch(es) removed.");
             }
             catch (Exception e)
             {
-                Log.Error("[TactTest] Could not disable Loadouts module — scenarios may be contaminated: " + e.Message);
+                Log.Error("[TactTest] Could not neutralize Loadouts module - scenarios may be contaminated: " + e.Message);
             }
         }
 
@@ -442,7 +434,7 @@ namespace CESSTacticsTestStaging
                 if (tick - phaseStartTick > phase.deadlineTicks)
                 {
                     phase.invalid = true;
-                    Log.Warning($"[TactTest] Phase '{phase.label}' INVALID — preconditions never held: "
+                    Log.Warning($"[TactTest] Phase '{phase.label}' INVALID - preconditions never held: "
                                 + string.Join(", ", phase.checks.Where(c => c.precondition && !c.passed)
                                                          .Select(c => $"{c.name} ({c.lastDetail})")));
                     AdvancePhase();
@@ -454,7 +446,7 @@ namespace CESSTacticsTestStaging
             {
                 phase.failed = true;
                 Log.Warning($"[TactTest] Phase '{phase.label}' FAILED: '{tripped.name}' must not happen "
-                            + $"but did at tick {tick} — {tripped.lastDetail}");
+                            + $"but did at tick {tick} - {tripped.lastDetail}");
                 AdvancePhase();
                 return;
             }
@@ -472,7 +464,7 @@ namespace CESSTacticsTestStaging
                 phase.invalid = !preconditionsHold;
                 phase.failed = !phase.invalid;
                 string why = phase.invalid
-                    ? "INVALID — preconditions never held: "
+                    ? "INVALID - preconditions never held: "
                       + string.Join(", ", phase.checks.Where(c => c.precondition && !c.passed)
                                                .Select(c => $"{c.name} ({c.lastDetail})"))
                     : $"FAILED (deadline {phase.deadlineTicks} ticks).";
@@ -612,7 +604,7 @@ namespace CESSTacticsTestStaging
 
         /// <summary>An invariant held across the whole phase: eval returns TRUE while
         /// the world stays good, and the first FALSE trips the phase (the compat
-        /// suite's convention — not "return true when the bad thing happens").</summary>
+        /// suite's convention - not "return true when the bad thing happens").</summary>
         private static Check N(string name, Func<(bool, string)> eval)
         {
             return new Check { name = name, eval = eval, negative = true };
@@ -626,7 +618,7 @@ namespace CESSTacticsTestStaging
 
         private static Pawn Raider()
         {
-            // Humans only — the mech scenarios have their own Mech() finder, and the
+            // Humans only - the mech scenarios have their own Mech() finder, and the
             // flesh-target phases must never accidentally grab the centipede.
             return Find.CurrentMap.mapPawns.AllPawnsSpawned
                 .FirstOrDefault(p => p.HostileTo(Faction.OfPlayer) && !p.Dead && !p.Downed
@@ -654,7 +646,7 @@ namespace CESSTacticsTestStaging
             pawn?.stances?.stunner?.StunFor(ticks, null, addBattleLog: false, showMote: false);
         }
 
-        /// <summary>Strip accumulated injuries/blood loss between phases — the disarmed
+        /// <summary>Strip accumulated injuries/blood loss between phases - the disarmed
         /// raider's fists add up across every close-park phase and eventually down the
         /// subject mid-suite.</summary>
         private static void HealInjuries(Pawn pawn)
@@ -666,7 +658,7 @@ namespace CESSTacticsTestStaging
             }
         }
 
-        /// <summary>Disarmed hostile — a valid AttackTargetFinder threat that can't
+        /// <summary>Disarmed hostile - a valid AttackTargetFinder threat that can't
         /// meaningfully hurt or be quickly killed across phases.</summary>
         private static Pawn SpawnThreat(Map map)
         {
@@ -717,7 +709,7 @@ namespace CESSTacticsTestStaging
         {
             Pawn abort = Colonist("Abort");
             ThingDef pistol = D("Gun_Autopistol");
-            Pawn closeHostile = null; // Raider() filters Downed — hold the instance ourselves
+            Pawn closeHostile = null; // Raider() filters Downed - hold the instance ourselves
 
             CompAmmoUser PistolComp() => Carried(abort, pistol).TryGetComp<CompAmmoUser>();
 
@@ -808,7 +800,7 @@ namespace CESSTacticsTestStaging
                     minTicks = 1800,
                     // The close hostile is DOWNED on purpose: CE's safe-distance
                     // predicate counts any non-invisible hostile pawn, downed
-                    // included, and this feature mirrors that predicate exactly —
+                    // included, and this feature mirrors that predicate exactly -
                     // while a downed raider cannot beat up the defenseless subject
                     // for the length of the negative window.
                     arrange = () =>
@@ -873,7 +865,7 @@ namespace CESSTacticsTestStaging
                     return;
                 }
             }
-            ParkPawnNear(anchor, parked, distance); // no visible ring cell — east fallback
+            ParkPawnNear(anchor, parked, distance); // no visible ring cell - east fallback
         }
 
         private static Pawn SpawnMech(string kindDefName, Pawn anchor, int distance)
@@ -937,6 +929,21 @@ namespace CESSTacticsTestStaging
                 {
                     label = "off-close-range-pick",
                     deadlineTicks = 3000,
+                    // Self-contained retention: SS-remember ammy's rifle sidearm up front so the
+                    // compat patch's drop shield keeps it for the whole scenario. The premise of
+                    // the later abort/swap phases is that ammy still carries it; without this the
+                    // rifle relied on the Loadouts module to be remembered (the shared test env
+                    // loads Loadouts, but this harness neutralizes it), and CE dropped it.
+                    arrange = () =>
+                    {
+                        CompSidearmMemory mem = CompSidearmMemory.GetMemoryCompForPawn(ammy);
+                        ThingWithComps r = Carried(ammy, rifle);
+                        if (mem != null && r != null
+                            && !mem.RememberedWeapons.Contains(r.toThingDefStuffDefPair()))
+                        {
+                            mem.InformOfAddedSidearm(r);
+                        }
+                    },
                     mutate = () =>
                     {
                         Pawn mech = Mech() ?? throw new InvalidOperationException("Mech missing");
@@ -956,7 +963,7 @@ namespace CESSTacticsTestStaging
                     label = "on-armor-flips-to-penetrator",
                     deadlineTicks = 3000,
                     // The staged centipede's plate stops BOTH loads outright under the
-                    // CE-true model (see the defer phase below) — the flip needs armor
+                    // CE-true model (see the defer phase below) - the flip needs armor
                     // the rifle penetrates and buckshot does not, so this phase brings
                     // its own scyther.
                     mutate = () =>
@@ -979,7 +986,7 @@ namespace CESSTacticsTestStaging
                     deadlineTicks = 3000,
                     // Centipede plate zeroes every multiplier; re-ranking zeros would be
                     // noise, so the feature must stand down and let SS's raw pick
-                    // through (the close-range shotgun) — pins F04's zero-defer branch.
+                    // through (the close-range shotgun) - pins F04's zero-defer branch.
                     // The scyther goes away first: it would otherwise shadow Mech() and
                     // carve up Ammy while the phase polls.
                     arrange = () =>
@@ -1079,7 +1086,7 @@ namespace CESSTacticsTestStaging
                     label = "warmup-swap-actually-draws-the-penetrator",
                     deadlineTicks = 7000,
                     // T3-3: the ONLY in-game path that feeds a target into ranged
-                    // selection is the warmup auto-switch — and it used to compare the
+                    // selection is the warmup auto-switch - and it used to compare the
                     // challenger's armor-adjusted score against the incumbent's RAW
                     // score, so the flip never fired outside the harness. Staging lives
                     // in mutate behind a world-is-ticking gate: isolated runs arrange at
@@ -1109,7 +1116,7 @@ namespace CESSTacticsTestStaging
                             ammy.TryGetComp<CompInventory>().TrySwitchToWeapon(sg);
                         }
                         // The staged centipede sits ~8 cells out and RETURNS FIRE the
-                        // moment Ammy drafts and shoots — and downing it here races its
+                        // moment Ammy drafts and shoots - and downing it here races its
                         // in-flight burst (and sometimes kills it outright). Park it out
                         // of blaster range instead; the hopeless phase stages its own.
                         Pawn centipede = Mech();
@@ -1122,7 +1129,7 @@ namespace CESSTacticsTestStaging
                         Job job = JobMaker.MakeJob(JobDefOf.AttackStatic, warmupScyther);
                         ammy.jobs.StartJob(job, JobCondition.InterruptForced);
                     },
-                    // The moment the swap lands the scyther has done its job — destroy
+                    // The moment the swap lands the scyther has done its job - destroy
                     // it before its charge reaches Ammy (it killed the subject between
                     // phases and left the NEXT phase anchored on a dead pawn).
                     poll = () =>
@@ -1156,7 +1163,7 @@ namespace CESSTacticsTestStaging
                     label = "warmup-vs-hopeless-armor-still-fires",
                     deadlineTicks = 9000,
                     // Convergence C1: the all-hopeless defer used to hand trySwap a RAW
-                    // score against an in-scope incumbent adjusted to ~0 — a phantom
+                    // score against an in-scope incumbent adjusted to ~0 - a phantom
                     // "swap" to the already-equipped gun every warmup, which reset the
                     // attack job forever: the pawn aimed eternally and never fired,
                     // flooding the log with SS's already-equipped warning. That warning
@@ -1174,7 +1181,7 @@ namespace CESSTacticsTestStaging
                         // subject before mutate could act. Position and health writes
                         // are tick-0-safe (the tick-0 lie is about caches and stances).
                         // NOTE: DamageUntilDowned often CANNOT down a mech (it ends
-                        // alive at ~8% hp) — the real shield is the 45-cell park,
+                        // alive at ~8% hp) - the real shield is the 45-cell park,
                         // outside the charge blaster's reach; the wounding just makes
                         // the first rifle hit decisive.
                         Pawn mech0 = Mech();
@@ -1209,13 +1216,13 @@ namespace CESSTacticsTestStaging
                         {
                             // T4-1 lives at the INTERSECTION of the two features: the
                             // all-hopeless defer (targetAware) hands its pick to the
-                            // depth tiebreak (ammoDepthTiebreak) — with the tiebreak off,
+                            // depth tiebreak (ammoDepthTiebreak) - with the tiebreak off,
                             // the MOVE branch is unreachable and the pin is vacuous.
                             TacticsMod.Settings.targetAwareAmmoScoring = true;
                             TacticsMod.Settings.ammoDepthTiebreak = true;
                             step = "recover-guns";
                             // The centipede's last in-flight burst can DOWN Ammy right as
-                            // the previous phase latches — the rifle lands on the floor.
+                            // the previous phase latches - the rifle lands on the floor.
                             // Recover anything dropped, then re-arm.
                             foreach (ThingDef def in new[] { rifle, shotgun })
                             {
@@ -1245,7 +1252,7 @@ namespace CESSTacticsTestStaging
                             step = "re-equip";
                             // The RIFLE, unconditionally: isolated runs load with the
                             // save's shotgun in hand, whose ~16 range never reaches the
-                            // 45-cell target — the pawn stood Mobile forever. Sequenced
+                            // 45-cell target - the pawn stood Mobile forever. Sequenced
                             // only worked because the warmup phase had already swapped.
                             if (ammy.equipment?.Primary?.def != rifle && Carried(ammy, rifle) != null)
                             {
@@ -1253,7 +1260,7 @@ namespace CESSTacticsTestStaging
                             }
                             step = "twin";
                             // T4-1's trigger, made deterministic: the picked weapon among
-                            // equal raw scores is the FIRST enumerated — the primary
+                            // equal raw scores is the FIRST enumerated - the primary
                             // (GetCarriedWeapons walks inventory in reversed add order, so
                             // never bet on inventory position). Shallow the equipped
                             // rifle to 5 rounds and stage ONE full twin: spares are a
@@ -1320,7 +1327,7 @@ namespace CESSTacticsTestStaging
                         else if (ammy.stances?.curStance is Stance_Mobile)
                         {
                             // Still no firing solution: LOS-park on a ring, stepping
-                            // closer each pass (floor 22 — cook-off clearance).
+                            // closer each pass (floor 22 - cook-off clearance).
                             ParkWithLOS(ammy, mech, (int)Mathf.Max(d - 8f, 22f));
                         }
                     },
@@ -1342,7 +1349,7 @@ namespace CESSTacticsTestStaging
                         C("defer-move-stays-adjusted", () =>
                         {
                             // T4-1's direct pin: with two tied inventory twins the depth
-                            // tiebreak MOVES the deferred pick — the returned score must
+                            // tiebreak MOVES the deferred pick - the returned score must
                             // stay in the defer's adjusted currency (≈0), never the raw.
                             Pawn mech = Mech();
                             if (mech == null)
@@ -1358,7 +1365,7 @@ namespace CESSTacticsTestStaging
                         }),
                         N("no-phantom-swap-mid-warmup", () =>
                         {
-                            // T4-1: the deferred tiebreak MOVE must not leak a raw score —
+                            // T4-1: the deferred tiebreak MOVE must not leak a raw score -
                             // leaked, trySwap crowns the same-def twin and the attack job
                             // dies to an instance swap the player never asked for.
                             bool stable = hopelessRifleAtAttack == null
@@ -1380,7 +1387,7 @@ namespace CESSTacticsTestStaging
                     deadlineTicks = 9000,
                     // The abort's own stand-down (both T4 reviewers flagged it
                     // unstaged): a loaded shotgun IN RANGE of the downed centipede is
-                    // a swap SS would offer, but every modeled score is zero — the
+                    // a swap SS would offer, but every modeled score is zero - the
                     // defer hands back an adjusted 0 and the abort must decline and
                     // let CE's automatic ran-dry reload finish.
                     arrange = () =>
@@ -1391,7 +1398,7 @@ namespace CESSTacticsTestStaging
                         // premise is the defer alone
                         TacticsMod.Settings.ammoDepthTiebreak = false;
                         // The warmup phases leave the centipede ALIVE at 9% (a downed mech
-                        // is no AttackTargetFinder threat — NeedThreat/NeedAutoTargetable —
+                        // is no AttackTargetFinder threat - NeedThreat/NeedAutoTargetable -
                         // so the abort would decline for the wrong reason). Alive at 12
                         // cells it guns the subject down instead: heal, hold fire, and pin
                         // the blaster with a stun that outlasts the phase.
@@ -1402,7 +1409,7 @@ namespace CESSTacticsTestStaging
                         // load undrafted; sequenced inherited the warmup phase's draft).
                         ammy.drafter.Drafted = true;
                         ammy.drafter.FireAtWill = false;
-                        // The RIFLE in hand, dry, is the premise — isolated runs load the
+                        // The RIFLE in hand, dry, is the premise - isolated runs load the
                         // save's shotgun equipped, and TryStartReload silently no-ops on
                         // a non-equipped instance (IsEquippedGun). BEFORE the purge: with
                         // the shotgun still primary, "non-primary rifles" is ALL of them.
@@ -1410,7 +1417,7 @@ namespace CESSTacticsTestStaging
                         {
                             ammy.TryGetComp<CompInventory>().TrySwitchToWeapon(Carried(ammy, rifle));
                         }
-                        // one rifle only — the twin phase's spare muddies Carried()
+                        // one rifle only - the twin phase's spare muddies Carried()
                         foreach (var extra in ammy.GetCarriedWeapons(true, true)
                             .Where(w => w.def == rifle && w != ammy.equipment?.Primary).ToList())
                         {
@@ -1421,7 +1428,7 @@ namespace CESSTacticsTestStaging
                         su?.ResetAmmoCount();
                         // The abort targets AttackTargetFinder's pick, not ours: isolated
                         // runs load whatever hostiles the fresh save carries (a scyther is
-                        // a soft target the shotgun rightly WANTS — sequenced runs only
+                        // a soft target the shotgun rightly WANTS - sequenced runs only
                         // worked because earlier phases had already cleared it). Keep
                         // exactly one hostile: the armor-hopeless centipede.
                         Pawn mech = null;
@@ -1448,7 +1455,7 @@ namespace CESSTacticsTestStaging
                         // Primary, not Carried(): TryStartReload no-ops on inventory guns.
                         CompAmmoUser ru = ammy.equipment.Primary.TryGetComp<CompAmmoUser>();
                         ru.CurMagCount = 0;
-                        ru.TryStartReload(); // the auto entry — abortable by T4-2's rule
+                        ru.TryStartReload(); // the auto entry - abortable by T4-2's rule
                     },
                     checks =
                     {
@@ -1558,7 +1565,7 @@ namespace CESSTacticsTestStaging
                         C("flesh-forensics", () => (true, $"{fleshForensics} nowDowned={marcy.Downed}"), informational: true),
                         C("blade-vs-flesh", () =>
                         {
-                            // Through the preference tree WITH the target — the entry the
+                            // Through the preference tree WITH the target - the entry the
                             // T3-2 rework hooks. A bare findBestMeleeWeapon call opens no
                             // scope on purpose (that is the dead wiring the rework fixed).
                             WeaponAssingment.equipBestWeaponFromInventoryByPreference(
@@ -1576,7 +1583,7 @@ namespace CESSTacticsTestStaging
                     // Centipede plate (blunt 45 MPa vs a 5.6 mace) zeroes every
                     // candidate under the CE-true model: the feature stands down and
                     // SS's own P12-backed ranking picks the mace as least-bad. The
-                    // observable pick matches feature-off ON PURPOSE — this phase pins
+                    // observable pick matches feature-off ON PURPOSE - this phase pins
                     // the defer semantics; the feature's actual flip is phase 2's
                     // knife-vs-flesh. A VANILLA-tools club (staging def, no CE data)
                     // rides along: unmodelable weapons must neither win the armor
@@ -1622,7 +1629,7 @@ namespace CESSTacticsTestStaging
                     label = "a-real-swing-draws-the-knife",
                     deadlineTicks = 9000,
                     // T3-2: the direct-call phases above proved the MATH while the
-                    // WIRING was dead — no in-game caller ever passed a target. This
+                    // WIRING was dead - no in-game caller ever passed a target. This
                     // phase drives the real chain: an adjacent flesh raider swings,
                     // doCQC fires, the scope carries the attacker into SS's melee
                     // selection, and vs bare flesh the de-biased CE dps picks the
@@ -1631,7 +1638,7 @@ namespace CESSTacticsTestStaging
                     {
                         TacticsMod.Settings.armorAwareMelee = true;
                         // The armor phase's vanilla club raw-beats the knife vs FLESH
-                        // even in stock SS — that phase's prop, not this one's.
+                        // even in stock SS - that phase's prop, not this one's.
                         foreach (var club in marcy.GetCarriedWeapons(true, true)
                             .Where(w => w.def == D("CESSTest_VanillaClub")).ToList())
                         {
@@ -1698,7 +1705,7 @@ namespace CESSTacticsTestStaging
             bool gizmoReClicked = false;
             string reClickForensics = "unset";
 
-            // Carried() order is churn-dependent and phase 2 stages a biocoded twin —
+            // Carried() order is churn-dependent and phase 2 stages a biocoded twin -
             // equipping THAT makes later reload/abort pins run on a gun SS refuses to
             // consider. Always pick a usable (non-coded) instance.
             ThingWithComps UsableRifle()
@@ -1758,7 +1765,7 @@ namespace CESSTacticsTestStaging
                             CompSidearmMemory.GetMemoryCompForPawn(abort)?.InformOfAddedSidearm(coded);
                         }
                         // A DRY second rifle with spares on hand: under the core patch's
-                        // axis 3 it counts as "viable" to SS — the loaded-now scope must
+                        // axis 3 it counts as "viable" to SS - the loaded-now scope must
                         // hide it or the abort equips an empty gun (C3's failing case).
                         bool dryDecoyPresent = abort.GetCarriedWeapons(true, true).Any(w =>
                             w.def == D("Gun_AssaultRifle") && w != abort.equipment?.Primary
@@ -1778,7 +1785,7 @@ namespace CESSTacticsTestStaging
                         // Inside the autopistol's CE range (16), NOT the historical 40:
                         // the feature scores the swap candidate at the threat's actual
                         // distance, and with the core patch's corrected range gate an
-                        // out-of-range pistol scores zero — no viable swap, reload
+                        // out-of-range pistol scores zero - no viable swap, reload
                         // correctly finishes. The old 40-tile park only ever "worked"
                         // through SS's squared-distance bug. A threat the pistol cannot
                         // reach is phase 1's territory (finish the reload); THIS phase
@@ -1813,14 +1820,14 @@ namespace CESSTacticsTestStaging
                     },
                     mutate = () =>
                     {
-                        // Back onto the rifle, then the REAL reload gizmo — CE stamps
+                        // Back onto the rifle, then the REAL reload gizmo - CE stamps
                         // playerForced on auto-reloads too, so the pin must go through
                         // the one entry only the player reaches
                         // (SyncedTryStartReload; T4-2), not a synthetic flag.
                         ThingWithComps rifleThing = UsableRifle();
                         abort.TryGetComp<CompInventory>().TrySwitchToWeapon(rifleThing);
                         // Phase 2's staging rifles overfill the pack, and any weapon
-                        // switch bulk-drops the pistol — purge them AFTER the switch,
+                        // switch bulk-drops the pistol - purge them AFTER the switch,
                         // then guarantee a LOADED pistol: without one a stripped marker
                         // still "declines" and the T5-C A-leg is green through vacuity.
                         foreach (ThingWithComps extra in abort.GetCarriedWeapons(true, true)
@@ -1856,7 +1863,7 @@ namespace CESSTacticsTestStaging
                             .Invoke(ru, null);
                     },
                     // T5-C: an impatient second gizmo click mid-reload re-stamps while
-                    // CE's TryStartReload early-outs on the running job — the stamp then
+                    // CE's TryStartReload early-outs on the running job - the stamp then
                     // postdates startTick, and the exact-equality join stripped the very
                     // protection the click expressed. Re-click for real ~30 ticks in;
                     // the at-or-after join must keep the reload untouchable.
@@ -1904,10 +1911,10 @@ namespace CESSTacticsTestStaging
                     label = "a-ran-dry-auto-reload-is-abortable",
                     deadlineTicks = 6000,
                     // T4-2's flagship: CE's automatic reload when the magazine empties
-                    // mid-attack carries playerForced=true — the flag alone made the
+                    // mid-attack carries playerForced=true - the flag alone made the
                     // abort skip it, and the suite's synthetic playerForced:false jobs
                     // hid that for three review rounds. Drive the REAL auto entry
-                    // (TryStartReload directly — no gizmo marker) with a threat inside
+                    // (TryStartReload directly - no gizmo marker) with a threat inside
                     // the pistol's range: the abort must fire.
                     arrange = () =>
                     {
@@ -1927,7 +1934,7 @@ namespace CESSTacticsTestStaging
                         {
                             abort.TryGetComp<CompInventory>().TrySwitchToWeapon(usable);
                         }
-                        // The pistol must be a live swap target — and weapon switches
+                        // The pistol must be a live swap target - and weapon switches
                         // bulk-drop it to the floor when the staged rifles overfill the
                         // pack (the backpack phase's standing lesson). Recover or remake.
                         ThingWithComps pi = Carried(abort, pistol);
@@ -1964,7 +1971,7 @@ namespace CESSTacticsTestStaging
                     {
                         // Primary, not Carried(): TryStartReload no-ops on inventory guns.
                         // StartJob is synchronous, so the snapshot right after the call is
-                        // the proof the REAL auto entry issued a playerForced reload —
+                        // the proof the REAL auto entry issued a playerForced reload -
                         // the abort can kill the job between polls, so no poll may see it.
                         CompAmmoUser ru = abort.equipment.Primary.TryGetComp<CompAmmoUser>();
                         ru.CurMagCount = 0;
@@ -1977,7 +1984,7 @@ namespace CESSTacticsTestStaging
                     checks =
                     {
                         // Preconditions gate the mutate (runner defers it until they hold),
-                        // so they may only assert ARRANGE state — the reload itself is
+                        // so they may only assert ARRANGE state - the reload itself is
                         // asserted from the mutate snapshot below.
                         P("staged-usable-rifle-and-loaded-swap", () =>
                         {
@@ -2009,7 +2016,7 @@ namespace CESSTacticsTestStaging
                 {
                     label = "a-backpack-top-off-is-not-our-problem",
                     deadlineTicks = 7000,
-                    // T3-1: reload-abort must ignore reloads of INVENTORY guns — here CE's
+                    // T3-1: reload-abort must ignore reloads of INVENTORY guns - here CE's
                     // OWN undrafted top-off (priority 9.1, no safe-distance gate) with a
                     // hostile visible in the old trigger band. Unfixed, F01 killed the
                     // top-off and swapped the loaded primary every 30 ticks, forever.
@@ -2037,7 +2044,7 @@ namespace CESSTacticsTestStaging
                             }
                             rif?.TryGetComp<CompAmmoUser>()?.ResetAmmoCount();
                             step = "purge-decoys";
-                            // Phase 2's biocoded twin and dry decoy overfill the pack —
+                            // Phase 2's biocoded twin and dry decoy overfill the pack -
                             // the next weapon switch bulk-drops the pistol to the floor.
                             // Their job ended with phase 2; clear them and any duplicate
                             // pistols phase 4's churn left behind.
@@ -2210,7 +2217,7 @@ namespace CESSTacticsTestStaging
                     label = "ammo-back-forced-resumes",
                     deadlineTicks = 3000,
                     // The resume must be FROM the fallen-through state, not from a pawn
-                    // that never left the revolver — arrange replays the fall-through and
+                    // that never left the revolver - arrange replays the fall-through and
                     // the precondition proves it landed before ammo comes back.
                     arrange = () =>
                     {
@@ -2248,7 +2255,7 @@ namespace CESSTacticsTestStaging
                     label = "cqc-draws-the-knife-past-a-dry-forced-gun",
                     deadlineTicks = 6000,
                     // T3-6: SS's melee-attacked reflex checks the forced flag one call
-                    // ABOVE everything the fall-through used to hide — a pawn holding a
+                    // ABOVE everything the fall-through used to hide - a pawn holding a
                     // truly-dry forced gun who got stabbed never drew a knife. This
                     // phase drives the REAL entry point: an adjacent raider swings, doCQC
                     // fires, and the extended hide lets the knife come out. The forced
@@ -2258,7 +2265,7 @@ namespace CESSTacticsTestStaging
                         TacticsMod.Settings.forcedDryFallthrough = true;
                         ForceDryRevolver();
                         // TRULY dry: the ammo-back phase leaves two magazines of .44 in the
-                        // pack, and spares mean "not dry" — strip them so the reflex faces
+                        // pack, and spares mean "not dry" - strip them so the reflex faces
                         // the state this phase is about.
                         CompAmmoUser dryUser = Carried(forcy, revolver).TryGetComp<CompAmmoUser>();
                         var calibers = dryUser.Props?.ammoSet?.ammoTypes?.Select(l => (ThingDef)l.ammo).ToList();
@@ -2293,7 +2300,7 @@ namespace CESSTacticsTestStaging
                     // (observed at 70 tiles), or loses the swing race to the deadline
                     // (~50% of isolated runs). Drive the swing THROUGH THE REAL VERB
                     // ourselves: TryMeleeAttack goes verb → TryCastShot → the core
-                    // patch's P06 re-attach → doCQC — the exact in-game chain, minus
+                    // patch's P06 re-attach → doCQC - the exact in-game chain, minus
                     // the AI's mood.
                     poll = () =>
                     {
@@ -2343,7 +2350,7 @@ namespace CESSTacticsTestStaging
                     label = "a-loaded-twin-keeps-the-forced-branch-alive",
                     deadlineTicks = 4000,
                     // Convergence C2: dryness is judged for the forced PAIR, and the old
-                    // first-instance test let a drained twin speak for a loaded one —
+                    // first-instance test let a drained twin speak for a loaded one -
                     // hiding a forced gun SS's own branch would have equipped. Stage
                     // both: twin A drained in hand, twin B loaded in the pack, no
                     // spares. The forced branch must equip the LOADED twin.
@@ -2390,7 +2397,7 @@ namespace CESSTacticsTestStaging
                         C("forced-branch-stays-alive", () =>
                         {
                             // WHICH twin SS draws is its own MarketValue tie-break (equal
-                            // twins → arbitrary) — the pin is that the pair is NOT hidden:
+                            // twins → arbitrary) - the pin is that the pair is NOT hidden:
                             // the forced branch runs and a revolver ends up in hand
                             // instead of the fall-through pistol.
                             ThingDef primary = forcy.equipment?.Primary?.def;
@@ -2404,7 +2411,7 @@ namespace CESSTacticsTestStaging
                     label = "mid-refill-the-forced-branch-waits",
                     deadlineTicks = 4000,
                     // T3-11: while the forced gun's refill job is literally in flight,
-                    // backpack ammo must NOT make it look "not dry" — the forced branch
+                    // backpack ammo must NOT make it look "not dry" - the forced branch
                     // used to re-equip it at 0 rounds and kill its own refill. All
                     // synchronous: stage, start the refill, poke the preference pass,
                     // observe in the same call.
@@ -2428,11 +2435,11 @@ namespace CESSTacticsTestStaging
                         if (mem6 != null)
                         {
                             // SS's DefaultRanged branch re-equips a preferred gun with no dry
-                            // check of its own — that is SS's normal preference behavior, not
+                            // check of its own - that is SS's normal preference behavior, not
                             // the forced branch this phase pins. Clear it for isolation.
                             mem6.DefaultRangedWeapon = null;
                         }
-                        // The CQC phase's distress swap throws the revolver on the GROUND —
+                        // The CQC phase's distress swap throws the revolver on the GROUND -
                         // pick it back up (or mint a fresh one) so this phase stands alone
                         // sequenced as well as isolated.
                         if (Carried(forcy, revolver) == null)
@@ -2466,7 +2473,7 @@ namespace CESSTacticsTestStaging
                         }
                         midRefillJobInfo = $"jobMade={job != null} curJob={forcy.CurJobDef?.defName} "
                             + $"targetB={(forcy.CurJob?.targetB.Thing as ThingWithComps)?.def?.defName} selAmmo={user.SelectedAmmo?.defName}";
-                        // A preference event lands mid-job — the doCQC shape: the MELEE
+                        // A preference event lands mid-job - the doCQC shape: the MELEE
                         // override, which the core patch's P05 guard deliberately lets
                         // through while a reload runs (a plain Combat pass is blocked, and
                         // pinned P05 rather than this fix in the first version). The
@@ -2530,7 +2537,7 @@ namespace CESSTacticsTestStaging
                     label = "on-picks-deeper-twin",
                     deadlineTicks = 3000,
                     // Stands alone against a fresh save: the depth difference is staged
-                    // here, not inherited from phase 1 (idempotent when sequenced — the
+                    // here, not inherited from phase 1 (idempotent when sequenced - the
                     // magazine is already at 1).
                     arrange = () => { EquippedTwin().TryGetComp<CompAmmoUser>().CurMagCount = 1; },
                     mutate = () => { TacticsMod.Settings.ammoDepthTiebreak = true; },
@@ -2556,7 +2563,7 @@ namespace CESSTacticsTestStaging
                     label = "epsilon-subordinate-to-dps",
                     deadlineTicks = 3000,
                     // Isolated runs never see phase 2's enable; without this the phase
-                    // "passes" with the feature off — the rifle wins raw and proves
+                    // "passes" with the feature off - the rifle wins raw and proves
                     // nothing about the tie window staying subordinate.
                     arrange = () => { TacticsMod.Settings.ammoDepthTiebreak = true; },
                     mutate = () =>
