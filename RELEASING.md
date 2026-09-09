@@ -11,7 +11,7 @@ manual local builds, `Assemblies/CESSCompatTactics.dll` committed.
    dotnet build Source/CESSCompatTactics/CESSCompatTactics.csproj -c Release
    ```
 
-2. **Automated test pass** — regenerate saves, then all five scenarios
+2. **Automated test pass** - regenerate saves, then all five scenarios
    (see TESTPLAN.md); every `test-results-tact*.json` must report
    `"passed": true`.
 
@@ -21,7 +21,7 @@ manual local builds, `Assemblies/CESSCompatTactics.dll` committed.
    against (this module reuses the patch's corrected scoring surfaces).
 
 5. **Demo GIF** (Workshop page requirement): stage the demo scene, owner records
-   the clip — see "Demo scene" below.
+   the clip - see "Demo scene" below.
 
 6. **Tag and publish** per the suite runbook (core repo `docs/SUITE_RELEASE.md`).
 
@@ -34,7 +34,7 @@ changes to SS state. Breaking either guarantee = major bump.
 
 ## Demo scene (for the Workshop GIF)
 
-Use the staged test saves — already cinematic enough:
+Use the staged test saves - already cinematic enough:
 
 - **TACT-1-reload-abort** (headline): colonist reloading, melee raider closing;
   with the feature on the pawn snaps to the loaded pistol instead of finishing
@@ -44,5 +44,5 @@ Use the staged test saves — already cinematic enough:
 
 Prep: `./test/run-tact-stage.sh`, load via the core repo's `run-test.sh`
 profile, dev mode OFF for the recording; defaults are already ship-on. Attach
-the clip to the Workshop description and embed in README (host in `Media/` —
+the clip to the Workshop description and embed in README (host in `Media/` -
 raw GitHub links animate in Steam descriptions).
