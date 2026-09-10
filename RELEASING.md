@@ -25,6 +25,15 @@ manual local builds, `Assemblies/CESSCompatTactics.dll` committed.
 
 6. **Tag and publish** per the suite runbook (core repo `docs/SUITE_RELEASE.md`).
 
+## Publishing (clean upload)
+
+RimWorld's uploader ships the WHOLE mod folder (no `.rwignore`; `SetItemContent`
+runs over the mod dir), so never upload the repo - it carries `Source/`, `test/`,
+`docs/`, `Media/`, etc. Run `./publish.sh` to stage an allowlisted clean copy (About
++ Assemblies + Defs/Patches/Languages as applicable + LICENSE/NOTICE) into a sibling
+`.publish/`, and upload that folder. After the first publish, copy the generated
+`About/PublishedFileId.txt` back into the repo.
+
 ## Versioning & save compatibility
 
 Semver; ships with the suite train. This module scribes NOTHING into saves
