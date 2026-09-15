@@ -40,7 +40,7 @@ namespace CESSCompatTactics
 
         public override string SettingsCategory()
         {
-            return "CE+SS Tactics";
+            return "CE+SS - Tactics";
         }
 
         public override void DoSettingsWindowContents(Rect inRect)
@@ -59,7 +59,7 @@ namespace CESSCompatTactics
                 "When choosing which gun to draw against a target, weigh the loaded ammo's effectiveness against the specific target.");
             listing.CheckboxLabeled("Enable armor-aware melee choice", ref Settings.armorAwareMelee,
                 "When drawing a melee weapon against a target, pick by melee-tool effectiveness against that specific target's armor (blunt vs armored, fast blades vs flesh).");
-            listing.CheckboxLabeled("Enable sidearm top-off while drafted", ref Settings.draftedSidearmReload,
+            listing.CheckboxLabeled("Enable sidearm reload while drafted", ref Settings.draftedSidearmReload,
                 "Extends drafted lull-reload from the equipped weapon to carried sidearms: during a combat lull a drafted pawn also refills empty sidearm magazines.");
             listing.End();
         }
